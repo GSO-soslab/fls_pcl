@@ -43,29 +43,22 @@ class FLS_PCL:
         self.n_bins, self.n_beams = rows, columns
         edge_list, sensor_frame = self.highest_intensity_coordinates_per_column_optimized(current)
         edge_image = np.zeros((rows, columns))
+
+        self.pointcloud_msg.height = self.n_beams
+        self.pointcloud_msg.width = self.n_bins
+        h = Header()
+        h.frame_id = self.frame_id
+        h.stamp = msg.header.stamp
+        self.pointcloud_msg.header = h
+
+        # # Populate the point data
+        num_points = self.pointcloud_msg.width * self.pointcloud_msg.height
+        self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
+
+        self.points = np.zeros(((self.pointcloud_msg.height), (self.pointcloud_msg.width), len(self.fields)), dtype=np.float32)
         
         if len(edge_list) > 0: 
-            rows, cols, intensities = edge_list[:, 0], edge_list[:, 1], edge_list[:, 2]
-            edge_image[rows, cols] = intensities
-            
-            #Convert image to view in image_view
-            edge_image = cv2.normalize(edge_image, None, 0, 255, cv2.NORM_MINMAX)
-            edge_image = edge_image.astype(np.uint8)
-            self.pub_fls_edge_image.publish(self.bridge.cv2_to_imgmsg(edge_image, encoding="mono8"))
-    
-            self.pointcloud_msg.height = self.n_beams
-            self.pointcloud_msg.width = self.n_beams
-            h = Header()
-            h.frame_id = self.frame_id
-            h.stamp = msg.header.stamp
-            self.pointcloud_msg.header = h
-    
-            # # Populate the point data
-            num_points = self.pointcloud_msg.width * self.pointcloud_msg.height
-            self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
-
-            self.points = np.zeros(((self.pointcloud_msg.height), (self.pointcloud_msg.width), len(self.fields)), dtype=np.float32)
-        
+            rospy.loginfo_throttle(3,"Scanning")
             for i in range(len(sensor_frame)): 
                 for j in range(len(sensor_frame)):
                     #Range threhold
@@ -83,18 +76,22 @@ class FLS_PCL:
                         self.points[i][j][1] = nan
                         #Intensity
                         self.points[i][j][3] = nan
-
-            # for i,j in product(range(len(sensor_frame)),range(len(sensor_frame))): 
-            #     self.points[i][j][0] = sensor_frame[i][0]
-            #     #Y
-            #     self.points[i][j][1] = sensor_frame[i][1]
-            #     #Intensity
-            #     self.points[i][j][3] = sensor_frame[i][2]
-
-            self.pointcloud_msg.data = self.points.tobytes()        
-            self.pub_pcl.publish(self.pointcloud_msg)
+            
+                rows, cols, intensities = edge_list[:, 0], edge_list[:, 1], edge_list[:, 2]
+                edge_image[rows, cols] = intensities
+            
+                
         else:
             rospy.loginfo_throttle(3,"No measurements")
+            self.points[:][:][:] = nan
+        
+        #Convert image to view in image_view
+        edge_image = cv2.normalize(edge_image, None, 0, 255, cv2.NORM_MINMAX)
+        edge_image = edge_image.astype(np.uint8)
+        self.pub_fls_edge_image.publish(self.bridge.cv2_to_imgmsg(edge_image, encoding="mono8"))
+
+        self.pointcloud_msg.data = self.points.tobytes()        
+        self.pub_pcl.publish(self.pointcloud_msg)
 
     def highest_intensity_coordinates_per_column_optimized(self, image):
         """
