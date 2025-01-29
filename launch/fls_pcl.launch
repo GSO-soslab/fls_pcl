@@ -1,0 +1,11 @@
+<launch>
+    <arg name="robot_name" default="alpha_rise"/>
+    <node ns="$(arg robot_name)"
+            name="fls_pcl_node" 
+            pkg="fls_pcl" 
+            type="fls_pcl.py"  
+            output="screen">
+    </node>
+    <rosparam ns="$(arg robot_name)" command="load" file="$(find fls_pcl)/config/fls_params.yaml"/>
+
+</launch>
