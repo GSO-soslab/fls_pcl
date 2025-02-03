@@ -14,6 +14,7 @@ class FLS_PCL:
         self.max_range = rospy.get_param('/alpha_rise/fls_params/max_range', 40)  #m
         self.intensity_threshold = rospy.get_param('/alpha_rise/fls_params/intensity_threshold', 10)
         self.range_threshold = rospy.get_param('/alpha_rise/fls_params/range_threshold', 10) #m
+        self.beam_skip_count = rospy.get_param('/alpha_rise/fls_params/beam_skip_count', 10) #number of beams
 
         self.bridge = CvBridge()
 
@@ -41,11 +42,11 @@ class FLS_PCL:
         current = self.bridge.imgmsg_to_cv2(msg)
         rows, columns = current.shape
         self.n_bins, self.n_beams = rows, columns
-        edge_list, sensor_frame = self.highest_intensity_coordinates_per_column_optimized(current)
+        edge_list, sensor_frame = self.extract_highest_intensity_per_beam(current)
         edge_image = np.zeros((rows, columns))
 
         self.pointcloud_msg.height = self.n_beams
-        self.pointcloud_msg.width = self.n_bins
+        self.pointcloud_msg.width = 1
         h = Header()
         h.frame_id = self.frame_id
         h.stamp = msg.header.stamp
@@ -55,30 +56,37 @@ class FLS_PCL:
         num_points = self.pointcloud_msg.width * self.pointcloud_msg.height
         self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
 
-        self.points = np.zeros(((self.pointcloud_msg.height), (self.pointcloud_msg.width), len(self.fields)), dtype=np.float32)
-        
+        #n_beams * (x,y,z,i)
+        self.points = np.zeros(((self.pointcloud_msg.height), len(self.fields)), dtype=np.float32)
         if len(edge_list) > 0: 
             rospy.loginfo_throttle(3,"Scanning")
             for i in range(len(sensor_frame)): 
-                for j in range(len(sensor_frame)):
                     #Range threhold
-                    if sensor_frame[i][0] > 10:                    
-                        #X
-                        self.points[i][j][0] = sensor_frame[i][0]
-                        #Y
-                        self.points[i][j][1] = sensor_frame[i][1]
-                        #Intensity
-                        self.points[i][j][3] = sensor_frame[i][2]
+                    if i % self.beam_skip_count == 0:
+                        if sensor_frame[i][0] > self.range_threshold:                    
+                            #X
+                            self.points[i][0] = sensor_frame[i][0]
+                            #Y
+                            self.points[i][1] = sensor_frame[i][1]
+                            #Intensity
+                            self.points[i][3] = sensor_frame[i][2]
+                        else:
+                            #X
+                            self.points[i][0] = nan
+                            #Y
+                            self.points[i][1] = nan
+                            #Intensity
+                            self.points[i][3] = nan
                     else:
                         #X
-                        self.points[i][j][0] = nan
+                        self.points[i][0] = nan
                         #Y
-                        self.points[i][j][1] = nan
+                        self.points[i][1] = nan
                         #Intensity
-                        self.points[i][j][3] = nan
+                        self.points[i][3] = nan
             
-                rows, cols, intensities = edge_list[:, 0], edge_list[:, 1], edge_list[:, 2]
-                edge_image[rows, cols] = intensities
+            rows, cols, intensities = edge_list[:, 0], edge_list[:, 1], edge_list[:, 2]
+            edge_image[rows, cols] = intensities
             
                 
         else:
@@ -93,7 +101,7 @@ class FLS_PCL:
         self.pointcloud_msg.data = self.points.tobytes()        
         self.pub_pcl.publish(self.pointcloud_msg)
 
-    def highest_intensity_coordinates_per_column_optimized(self, image):
+    def extract_highest_intensity_per_beam(self, image):
         """
         Retrieve the highest intensity index per column and convert into sensor frame.
 
