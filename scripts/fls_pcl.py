@@ -3,8 +3,8 @@ import rospy
 from sensor_msgs.msg import PointCloud2, PointField, Image
 from std_msgs.msg import Header
 import numpy as np
-from cv_bridge import CvBridge
 import cv2
+from cv_bridge import CvBridge
 from math import nan
 
 class FLS_PCL:
