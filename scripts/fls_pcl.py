@@ -5,7 +5,7 @@ from std_msgs.msg import Header
 import numpy as np
 import cv2
 from cv_bridge import CvBridge
-from math import nan
+from math import nan, sqrt
 
 class FLS_PCL:
     def __init__(self):
@@ -45,8 +45,8 @@ class FLS_PCL:
         edge_list, sensor_frame = self.extract_highest_intensity_per_beam(current)
         edge_image = np.zeros((rows, columns))
 
-        self.pointcloud_msg.height = self.n_beams
-        self.pointcloud_msg.width = 1
+        self.pointcloud_msg.height = 1
+        self.pointcloud_msg.width = self.n_beams
         h = Header()
         h.frame_id = self.frame_id
         h.stamp = msg.header.stamp
@@ -57,19 +57,29 @@ class FLS_PCL:
         self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
 
         #n_beams * (x,y,z,i)
-        self.points = np.zeros(((self.pointcloud_msg.height), len(self.fields)), dtype=np.float32)
+        self.points = np.zeros(((self.pointcloud_msg.width), len(self.fields)), dtype=np.float32)
         if len(edge_list) > 0: 
             rospy.loginfo_throttle(3,"Scanning")
             for i in range(len(sensor_frame)): 
                     #Range threhold
                     if i % self.beam_skip_count == 0:
-                        if sensor_frame[i][0] > self.range_threshold:                    
-                            #X
-                            self.points[i][0] = sensor_frame[i][0]
-                            #Y
-                            self.points[i][1] = sensor_frame[i][1]
-                            #Intensity
-                            self.points[i][3] = sensor_frame[i][2]
+                        #Check for intensity threshold to remove noise.
+                        if sensor_frame[i][2] > self.intensity_threshold:
+                            #Check for measurements past a range
+                            if sqrt(sensor_frame[i][0]**2 + sensor_frame[i][1]**2) > self.range_threshold:                    
+                                #X
+                                self.points[i][0] = sensor_frame[i][0]
+                                #Y
+                                self.points[i][1] = sensor_frame[i][1]
+                                #Intensity
+                                self.points[i][3] = sensor_frame[i][2]
+                            else:
+                                #X
+                                self.points[i][0] = nan
+                                #Y
+                                self.points[i][1] = nan
+                                #Intensity
+                                self.points[i][3] = nan
                         else:
                             #X
                             self.points[i][0] = nan
@@ -128,7 +138,7 @@ class FLS_PCL:
         max_intensity_values = image[max_intensity_rows, np.arange(image.shape[1])]
 
         # Threshold filtering
-        valid_mask = max_intensity_values > self.intensity_threshold
+        valid_mask = max_intensity_values > 0#self.intensity_threshold
 
         # Compute angles
         theta_values = base_theta + np.arange(image.shape[1]) * delta_theta
