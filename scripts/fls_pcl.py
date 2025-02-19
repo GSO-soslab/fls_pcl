@@ -10,6 +10,9 @@ from math import nan, sqrt
 class FLS_PCL:
     def __init__(self):
         #Params
+        self.pub_pcl = rospy.Publisher("/alpha_rise/fls/pointcloud", PointCloud2, queue_size=1)
+        rospy.Subscriber("/alpha_rise/fls/data/image", Image, self.image_CB, queue_size=1)
+
         self.horizontal_beamwidth = rospy.get_param('/alpha_rise/fls_params/horizontal_beamwidth', 70) #degrees
         self.max_range = rospy.get_param('/alpha_rise/fls_params/max_range', 40)  #m
         self.intensity_threshold = rospy.get_param('/alpha_rise/fls_params/intensity_threshold', 10)
@@ -18,10 +21,8 @@ class FLS_PCL:
 
         self.bridge = CvBridge()
 
-        rospy.Subscriber("/alpha_rise/fls/data/image", Image, self.image_CB, queue_size=1)
         self.frame_id = rospy.get_param("/alpha_rise/fls_params/frame_id", "alpha_rise/fls_link_sf")
         #Publisher info
-        self.pub_pcl = rospy.Publisher("/alpha_rise/fls/pointcloud", PointCloud2, queue_size=1)
         self.pub_fls_edge_image = rospy.Publisher("/alpha_rise/fls/data/image/edge", Image, queue_size=1)
 
         # Populate PointCloud2 message

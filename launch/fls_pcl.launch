@@ -5,6 +5,11 @@
             pkg="fls_pcl" 
             type="fls_pcl.py"  
             output="screen">
+
+        <!--Pub-->
+        <remap from="/alpha_rise/fls/pointcloud" to="/alpha_rise/fls/pointcloud"/>
+        <!--Sub-->
+        <remap from="/alpha_rise/fls/data/image" to="/alpha_rise/fls/data/image"/>
     </node>
     <rosparam ns="$(arg robot_name)" command="load" file="$(find fls_pcl)/config/fls_params.yaml"/>
 
