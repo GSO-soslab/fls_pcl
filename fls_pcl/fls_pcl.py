@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-import rospy
+import rclpy
+from rclpy.node import Node
+from rclpy.parameter import Parameter
 from sensor_msgs.msg import PointCloud2, PointField, Image
 from std_msgs.msg import Header
 import numpy as np
@@ -7,32 +9,47 @@ import cv2
 from cv_bridge import CvBridge
 from math import nan, sqrt
 
-class FLS_PCL:
+class FLS_PCL(Node):
     def __init__(self):
-        #Params
-        self.pub_pcl = rospy.Publisher("/alpha_rise/fls/pointcloud", PointCloud2, queue_size=1)
-        rospy.Subscriber("/alpha_rise/fls/data/image", Image, self.image_CB, queue_size=1)
+        super().__init__('fls_pcl_node')
 
-        self.horizontal_beamwidth = rospy.get_param('/alpha_rise/fls_params/horizontal_beamwidth', 70) #degrees
-        self.max_range = rospy.get_param('/alpha_rise/fls_params/max_range', 40)  #m
-        self.intensity_threshold = rospy.get_param('/alpha_rise/fls_params/intensity_threshold', 10)
-        self.range_threshold = rospy.get_param('/alpha_rise/fls_params/range_threshold', 10) #m
-        self.beam_skip_count = rospy.get_param('/alpha_rise/fls_params/beam_skip_count', 10) #number of beams
+        # Declare and read parameters
+        self.declare_parameter('horizontal_beamwidth', Parameter.Type.INTEGER)
+        self.declare_parameter('max_range',Parameter.Type.INTEGER)
+        self.declare_parameter('intensity_threshold',Parameter.Type.INTEGER)
+        self.declare_parameter('range_threshold',Parameter.Type.INTEGER)
+        self.declare_parameter('beam_skip_count',Parameter.Type.INTEGER)
+        self.declare_parameter('frame_id',Parameter.Type.STRING)
+        self.declare_parameter('sub_topic',Parameter.Type.STRING)
 
+
+        self.horizontal_beamwidth = self.get_parameter('horizontal_beamwidth').value
+        self.max_range = self.get_parameter('max_range').value
+        self.intensity_threshold = self.get_parameter('intensity_threshold').value
+        self.range_threshold = self.get_parameter('range_threshold').value
+        self.beam_skip_count = self.get_parameter('beam_skip_count').value
+        self.frame_id = self.get_parameter('frame_id').value
+        sub_topic = self.get_parameter('sub_topic').value
+
+
+        # CV bridge
         self.bridge = CvBridge()
 
-        self.frame_id = rospy.get_param("/alpha_rise/fls_params/frame_id", "alpha_rise/fls_link_sf")
-        #Publisher info
-        self.pub_fls_edge_image = rospy.Publisher("/alpha_rise/fls/data/image/edge", Image, queue_size=1)
+        # Publishers
+        self.pub_pcl = self.create_publisher(PointCloud2, '/alpha_rise/fls/pointcloud', 10)
+        self.pub_fls_edge_image = self.create_publisher(Image, '/alpha_rise/fls/data/image/edge', 10)
+
+        # Subscriber
+        self.create_subscription(Image,sub_topic,self.image_CB,10)
+
 
         # Populate PointCloud2 message
         self.pointcloud_msg = PointCloud2()
         self.fields = [
-        PointField('x', 0, PointField.FLOAT32, 1),
-        PointField('y', 4, PointField.FLOAT32, 1),
-        PointField('z', 8, PointField.FLOAT32, 1),
-        PointField('intensity', 12, PointField.FLOAT32,1),
-        # PointField('rgb', 16, PointField.INT32,1),
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+            PointField(name='intensity', offset=12, datatype=PointField.FLOAT32, count=1),
         ]
         self.pointcloud_msg.fields = self.fields
         self.pointcloud_msg.point_step = 4 * (len(self.fields))  # Each point occupies 16 bytes
@@ -60,7 +77,7 @@ class FLS_PCL:
         #n_beams * (x,y,z,i)
         self.points = np.zeros(((self.pointcloud_msg.width), len(self.fields)), dtype=np.float32)
         if len(edge_list) > 0: 
-            rospy.loginfo_throttle(3,"Scanning")
+            self.get_logger().info("Scanning", throttle_duration_sec = 3)
             for i in range(len(sensor_frame)): 
                     #Range threhold
                     if i % self.beam_skip_count == 0:
@@ -101,7 +118,7 @@ class FLS_PCL:
             
                 
         else:
-            rospy.loginfo_throttle(3,"No measurements")
+            self.get_logger().warn("No measurements", throttle_duration_sec = 3)
             self.points[:][:][:] = nan
         
         #Convert image to view in image_view
@@ -161,7 +178,11 @@ class FLS_PCL:
 
         return np.array(image_highest_coordinates), np.array(sensor_frame_coordinates)
     
-if __name__ == "__main__":
-    rospy.init_node("FLS_to_PCL")
-    FLS_PCL()
-    rospy.spin()
+def main():
+    rclpy.init()
+    node = FLS_PCL()
+    rclpy.spin(node)
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
