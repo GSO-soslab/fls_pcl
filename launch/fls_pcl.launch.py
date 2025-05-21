@@ -24,7 +24,7 @@ def generate_launch_description():
         name='fls_pcl_node',
         namespace="alpha_rise",
         output='screen',
-        parameters=[param_config, {'use_sim_time': True}]
+        parameters=[param_config]
     )
 
     ld.add_action(node)

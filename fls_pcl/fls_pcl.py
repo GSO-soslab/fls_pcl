@@ -67,7 +67,6 @@ class FLS_PCL(Node):
         self.pointcloud_msg.width = self.n_beams
         h = Header()
         h.frame_id = self.frame_id
-        h.stamp = msg.header.stamp
         self.pointcloud_msg.header = h
 
         # # Populate the point data
