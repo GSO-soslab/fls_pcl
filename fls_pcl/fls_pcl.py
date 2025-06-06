@@ -95,6 +95,8 @@ class FLS_PCL(Node):
                                 self.points[i][0] = nan
                                 #Y
                                 self.points[i][1] = nan
+                                #Z
+                                self.points[i][2] = nan
                                 #Intensity
                                 self.points[i][3] = nan
                         else:
@@ -102,6 +104,8 @@ class FLS_PCL(Node):
                             self.points[i][0] = nan
                             #Y
                             self.points[i][1] = nan
+                            #Z
+                            self.points[i][2] = nan
                             #Intensity
                             self.points[i][3] = nan
                     else:
@@ -109,6 +113,8 @@ class FLS_PCL(Node):
                         self.points[i][0] = nan
                         #Y
                         self.points[i][1] = nan
+                        #Z
+                        self.points[i][2] = nan
                         #Intensity
                         self.points[i][3] = nan
             

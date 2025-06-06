@@ -7,7 +7,7 @@
   <maintainer email="tony.jacob@uri.edu">Tony Jacob</maintainer>
   <license>BSD</license> 
   <!-- Build tool for ROS 2 -->
-  <buildtool_depend>ament_python</buildtool_depend>
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
   <!-- Dependencies -->
   <depend>rclpy</depend>
@@ -20,6 +20,7 @@
   
   <!-- Export section -->
   <export>
-    <build_type>ament_python</build_type>
+    <!-- <build_type>ament_python</build_type> -->
+    <build_type>ament_cmake</build_type>
   </export>
 </package>

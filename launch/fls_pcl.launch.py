@@ -20,7 +20,7 @@ def generate_launch_description():
     
     node = Node(
         package='fls_pcl',
-        executable='fls_pcl_node',
+        executable='fls_pcl.py',
         name='fls_pcl_node',
         namespace="alpha_rise",
         output='screen',
