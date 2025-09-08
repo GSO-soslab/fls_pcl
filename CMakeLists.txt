@@ -1,17 +1,11 @@
-cmake_minimum_required(VERSION 3.13)
-
-if(POLICY CMP0072)
-  cmake_policy(SET CMP0072 NEW)
-endif()
-
+cmake_minimum_required(VERSION 3.5)
 project(fls_pcl)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
-find_package(pcl_conversions REQUIRED)
-find_package(pcl_ros REQUIRED)
+# find_package(pcl_ros REQUIRED)
 # find_package(Open3D REQUIRED)
 
 # include_directories(
@@ -46,7 +40,7 @@ install(DIRECTORY config/
 
 install(PROGRAMS
   fls_pcl/fls_pcl.py
-  fls_pcl/loop.py
+  fls_pcl/depth_planner.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

@@ -8,4 +8,4 @@
     sub_topic: '/alpha_rise/stonefish/fls/data/image'
     
     # process every (int) beam into pointcloud. (1 - 512)
-    beam_skip_count: 10
+    beam_skip_count: 1

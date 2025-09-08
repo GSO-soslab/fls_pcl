@@ -76,7 +76,7 @@ class FLS_PCL(Node):
         #n_beams * (x,y,z,i)
         self.points = np.zeros(((self.pointcloud_msg.width), len(self.fields)), dtype=np.float32)
         if len(edge_list) > 0: 
-            self.get_logger().info("Scanning", throttle_duration_sec = 3)
+            # self.get_logger().info("Scanning", throttle_duration_sec = 3)
             for i in range(len(sensor_frame)): 
                     #Range threhold
                     if i % self.beam_skip_count == 0:
