@@ -55,13 +55,13 @@ def generate_launch_description():
         )
     
         # Bag file path (change this to the full path or make it configurable)
-    bag_file_path = '/home/tony/bags/whale_rock_10_10/rosbag2_2025_10_10-17_25_13/rosbag2_2025_10_10-17_25_14'
+    bag_file_path = '/home/tony/bags/whale_rock_10_10/rosbag2_2025_10_10-18_09_27/rosbag2_2025_10_10-18_09_28'
 
     # ROS2 bag play command
     bag_play = ExecuteProcess(
         cmd=[
             'ros2', 'bag', 'play', bag_file_path,
-            '--rate', '10.0',
+            '--rate', '1.0',
             '--clock'
         ],
         output='screen'
