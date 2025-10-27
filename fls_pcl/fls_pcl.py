@@ -7,15 +7,24 @@ from std_msgs.msg import Header
 import numpy as np
 import cv2
 from cv_bridge import CvBridge
-from math import nan, sqrt
+from tf2_ros import Buffer, TransformListener
+import tf2_sensor_msgs.tf2_sensor_msgs
+import sensor_msgs_py.point_cloud2 as pc2
+from tf2_ros import TransformException
+
 
 class FLS_PCL(Node):
     def __init__(self):
         super().__init__('fls_pcl_node')
+        
+        # TF2
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # Declare and read parameters
         self.declare_parameter('horizontal_beamwidth', Parameter.Type.INTEGER)
         self.declare_parameter('max_range',Parameter.Type.INTEGER)
+        self.declare_parameter('max_depth',Parameter.Type.DOUBLE)
         self.declare_parameter('intensity_threshold',Parameter.Type.INTEGER)
         self.declare_parameter('range_threshold',Parameter.Type.DOUBLE)
         self.declare_parameter('beam_skip_count',Parameter.Type.INTEGER)
@@ -25,6 +34,7 @@ class FLS_PCL(Node):
 
         self.horizontal_beamwidth = self.get_parameter('horizontal_beamwidth').value
         self.max_range = self.get_parameter('max_range').value
+        self.max_depth = self.get_parameter('max_depth').value
         self.intensity_threshold = self.get_parameter('intensity_threshold').value
         self.range_threshold = self.get_parameter('range_threshold').value
         self.beam_skip_count = self.get_parameter('beam_skip_count').value
@@ -37,6 +47,7 @@ class FLS_PCL(Node):
 
         # Publishers
         self.pub_pcl = self.create_publisher(PointCloud2, '/alpha_rise/fls/pointcloud/post', 10)
+        # self.pub_pcl_depth_filtered = self.create_publisher(PointCloud2, '/alpha_rise/fls/pointcloud/post/depth', 10)
         self.pub_fls_edge_image = self.create_publisher(Image, '/alpha_rise/fls/data/image/edge/post', 10)
 
         # Subscriber
@@ -66,7 +77,7 @@ class FLS_PCL(Node):
         self.n_bins, self.n_beams = rows, columns
 
         # === Convert all valid pixels to sensor frame coordinates ===
-        edge_list, sensor_frame = self.extract_all_points_in_sensor_frame(current)
+        edge_list, sensor_frame = self.extract_all_points_in_sensor_frame(current, mode='max_intensity')
         edge_image = np.zeros((rows, columns), dtype=np.float32)
 
         if len(edge_list) == 0:
@@ -85,21 +96,10 @@ class FLS_PCL(Node):
         sensor_y = sensor_frame[:, 1]
         intensity = sensor_frame[:, 2]
 
-        # Apply beam skipping (every Nth pixel)
-        indices = np.arange(len(sensor_frame))
-        mask_beam_skip = (indices % self.beam_skip_count) == 0
-
-        # Compute Euclidean range and apply range threshold
-        distances = np.sqrt(sensor_x**2 + sensor_y**2)
-        mask_range = distances > self.range_threshold
-
-        # Combine all masks
-        valid_mask = mask_beam_skip & mask_range
-
         # Filter valid points
-        valid_x = sensor_x[valid_mask]
-        valid_y = sensor_y[valid_mask]
-        valid_i = intensity[valid_mask]
+        valid_x = sensor_x
+        valid_y = sensor_y
+        valid_i = intensity
 
         # === Allocate and fill the point array ===
         num_points = len(valid_x)
@@ -126,16 +126,54 @@ class FLS_PCL(Node):
         # === Publish results ===
         self.pub_fls_edge_image.publish(self.bridge.cv2_to_imgmsg(edge_image, encoding="mono8"))
         self.pointcloud_msg.data = self.points.tobytes()
-        self.pub_pcl.publish(self.pointcloud_msg)
-    
-    def extract_all_points_in_sensor_frame(self, image):
+
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                'alpha_rise/world',
+                self.frame_id,
+                rclpy.time.Time()
+            )
+
+            # Apply transform
+            pc_transformed = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
+
+            # Read points including intensity
+            points = list(pc2.read_points(
+                pc_transformed,
+                field_names=('x', 'y', 'z', 'intensity'),
+                skip_nans=False
+            ))
+
+            # Modify points: set points with z > -1.0 to zero
+            new_points = []
+            for x, y, z, intensity in points:
+                if z > self.max_depth:
+                    x, y, z = 0.0, 0.0, 0.0
+                new_points.append([x, y, z, intensity])
+
+            # Create new PointCloud2 preserving intensity
+            pc_modified = pc2.create_cloud(pc_transformed.header, self.fields, new_points)
+            self.pub_pcl.publish(pc_modified)
+            # self.pub_pcl_depth_filtered.publish(pc_modified)
+
+        except TransformException as e:
+            self.get_logger().warn(f'Transform not available: {e}')
+            
+
+        
+    def extract_all_points_in_sensor_frame(self, image, mode='all'):
         """
-        Convert every pixel in the image into sensor-frame coordinates (x, y, intensity).
+        Convert pixels in the image into sensor-frame coordinates (x, y, intensity),
+        optionally filtering by beam skipping and range threshold first, then applying
+        intensity selection mode.
 
         Parameters
         ----------
         image : np.ndarray
             2D array (rows × columns) representing intensity values.
+        mode : str, optional
+            'all' - keep all points above threshold
+            'max_intensity' - keep only the highest-intensity point per column
 
         Returns
         -------
@@ -152,19 +190,10 @@ class FLS_PCL(Node):
         range_factor = self.max_range / self.n_bins
 
         # Create coordinate grids
-        rows, cols = np.indices(image.shape)  # rows[i,j], cols[i,j]
-
-        # Flatten for vectorized computation
+        rows, cols = np.indices(image.shape)
         rows_flat = rows.flatten()
         cols_flat = cols.flatten()
         intensities = image.flatten()
-
-        # apply threshold
-        valid_mask = intensities > self.intensity_threshold
-
-        rows_flat = rows_flat[valid_mask]
-        cols_flat = cols_flat[valid_mask]
-        intensities = intensities[valid_mask]
 
         # Compute angles and ranges
         theta_values = base_theta + cols_flat * delta_theta
@@ -173,6 +202,79 @@ class FLS_PCL(Node):
         # Convert to sensor frame (x, y)
         sensor_x = r_values * np.cos(theta_values)
         sensor_y = r_values * np.sin(theta_values)
+
+        # Apply beam skipping
+        indices = np.arange(len(sensor_x))
+        mask_beam_skip = (indices % self.beam_skip_count) == 0
+
+        # Apply range threshold
+        distances = np.sqrt(sensor_x**2 + sensor_y**2)
+        mask_range = distances > self.range_threshold
+
+        # Combine masks and filter first
+        final_mask = mask_beam_skip & mask_range
+        sensor_x = sensor_x[final_mask]
+        sensor_y = sensor_y[final_mask]
+        intensities = intensities[final_mask]
+        rows_flat = rows_flat[final_mask]
+        cols_flat = cols_flat[final_mask]
+
+        # Now apply intensity selection mode
+        if mode == 'all':
+            valid_mask = intensities > self.intensity_threshold
+            rows_flat = rows_flat[valid_mask]
+            cols_flat = cols_flat[valid_mask]
+            sensor_x = sensor_x[valid_mask]
+            sensor_y = sensor_y[valid_mask]
+            intensities = intensities[valid_mask]
+
+
+        elif mode == 'max_intensity':
+            # Step 0: apply intensity threshold
+            valid_mask = intensities > self.intensity_threshold
+            rows_flat = rows_flat[valid_mask]
+            cols_flat = cols_flat[valid_mask]
+            sensor_x = sensor_x[valid_mask]
+            sensor_y = sensor_y[valid_mask]
+            intensities = intensities[valid_mask]
+
+            if len(intensities) == 0:
+                # no valid points
+                return np.empty((0, 3)), np.empty((0, 3))
+
+            # Step 1: sort by columns
+            sort_idx = np.argsort(cols_flat)
+            sorted_cols = cols_flat[sort_idx]
+            sorted_intensities = intensities[sort_idx]
+
+            # Step 2: find boundaries for each column
+            col_change = np.diff(sorted_cols, prepend=sorted_cols[0]-1)
+            col_starts = np.flatnonzero(col_change)
+
+            # Step 3: find max intensity per column using reduceat
+            max_vals = np.maximum.reduceat(sorted_intensities, col_starts)
+            # map back to original indices
+            max_indices_in_sorted = []
+            for start, val in zip(col_starts, max_vals):
+                # search for the first occurrence of max in this column
+                end = col_starts[col_starts > start][0] if np.any(col_starts > start) else len(sorted_intensities)
+                local_idx = np.argmax(sorted_intensities[start:end])
+                max_indices_in_sorted.append(start + local_idx)
+            max_indices_in_sorted = np.array(max_indices_in_sorted)
+
+            # Step 4: mask
+            final_mask = np.zeros_like(intensities, dtype=bool)
+            final_mask[sort_idx[max_indices_in_sorted]] = True
+
+            # Apply mask
+            rows_flat = rows_flat[final_mask]
+            cols_flat = cols_flat[final_mask]
+            sensor_x = sensor_x[final_mask]
+            sensor_y = sensor_y[final_mask]
+            intensities = intensities[final_mask]
+
+        else:
+            raise ValueError("Invalid mode. Choose 'all' or 'max_intensity'.")
 
         # Combine into arrays
         image_coordinates = np.column_stack((rows_flat, cols_flat, intensities))
