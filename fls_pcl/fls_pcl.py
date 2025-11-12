@@ -46,9 +46,8 @@ class FLS_PCL(Node):
         self.bridge = CvBridge()
 
         # Publishers
-        self.pub_pcl = self.create_publisher(PointCloud2, '/alpha_rise/fls/pointcloud/post', 10)
-        # self.pub_pcl_depth_filtered = self.create_publisher(PointCloud2, '/alpha_rise/fls/pointcloud/post/depth', 10)
-        self.pub_fls_edge_image = self.create_publisher(Image, '/alpha_rise/fls/data/image/edge/post', 10)
+        self.pub_pcl = self.create_publisher(PointCloud2, '/alpha_rise/fls/pointcloud', 10)
+        self.pub_fls_edge_image = self.create_publisher(Image, '/alpha_rise/fls/data/image/edge', 10)
 
         # Subscriber
         self.create_subscription(Image,sub_topic,self.image_CB,10)
