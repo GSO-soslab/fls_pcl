@@ -61,14 +61,15 @@ def generate_launch_description():
     bag_play = ExecuteProcess(
         cmd=[
             'ros2', 'bag', 'play', bag_file_path,
-            '--rate', '10.0',
+            '--start-offset', '70.0',
+            '--rate', '1.0',
             '--clock'
         ],
         output='screen'
     )
 
     ld.add_action(node)
-    ld.add_action(path)
+    # ld.add_action(path)
     ld.add_action(description)
     ld.add_action(rviz)
     ld.add_action(bag_play)
