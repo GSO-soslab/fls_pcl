@@ -3,6 +3,11 @@ import yaml
 import pathlib
 from launch import LaunchDescription
 import launch.actions
+from launch.actions import IncludeLaunchDescription
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
+from launch.substitutions import PathJoinSubstitution
+from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
 from launch.substitutions import EnvironmentVariable
@@ -54,15 +59,43 @@ def generate_launch_description():
             arguments=['-d', [rviz_config_dir]],
         )
     
+        #Foxglove Bridge
+    foxglove = IncludeLaunchDescription(
+        XMLLaunchDescriptionSource(
+            PathJoinSubstitution([
+                FindPackageShare('alpha_rise_bringup'),
+                'launch',
+                'include',
+                'foxglove_bridge_launch.xml'
+            ])
+        )
+    )
         # Bag file path (change this to the full path or make it configurable)
-    bag_file_path = '/home/tony/bags/whale_rock_10_10/rosbag2_2025_10_10-18_09_27/rosbag2_2025_10_10-18_09_28'
+    # bag_file_path = '/home/tony/bags/whale_rock_10_10/rosbag2_2025_10_10-18_09_27/rosbag2_2025_10_10-18_09_28'
+    # bag_file_path = '/home/tony/bags/whale_rock_10_10/rosbag2_2025_10_10-17_46_01/rosbag2_2025_10_10-17_46_03/'
+    # bag_file_path = '/home/tony/bags/whale_rock_10_10/rosbag2_2025_10_10-17_25_13/rosbag2_2025_10_10-17_25_14/'
+
+
+    ## MSIS bags
+    # bag_file_path = '/home/tony/auv_ws/bags/msis/rosbag2_2025_11_24-15_44_37/rosbag2_2025_11_24-15_44_38/'
+
+    #Whale Rock 12/5
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_29_36/rosbag2_2025_12_05-15_29_38'
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_57_34/rosbag2_2025_12_05-15_57_35'
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_09_45/rosbag2_2025_12_05-16_09_47'
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_26_08/rosbag2_2025_12_05-16_26_09'
+    bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_43_41/rosbag2_2025_12_05-16_43_42'
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_54_58/rosbag2_2025_12_05-16_55_00'
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_09_41/rosbag2_2025_12_05-17_09_42'
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_22_29/rosbag2_2025_12_05-17_22_30'
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_35_12/rosbag2_2025_12_05-17_35_13'
 
     # ROS2 bag play command
     bag_play = ExecuteProcess(
         cmd=[
             'ros2', 'bag', 'play', bag_file_path,
-            '--start-offset', '70.0',
-            '--rate', '1.0',
+            # '--start-offset', '70.0',
+            '--rate', '4.0',
             '--clock'
         ],
         output='screen'
@@ -70,9 +103,10 @@ def generate_launch_description():
 
     ld.add_action(node)
     # ld.add_action(path)
-    ld.add_action(description)
     ld.add_action(rviz)
     ld.add_action(bag_play)
+    ld.add_action(description)
+    ld.add_action(foxglove)
 
 
 

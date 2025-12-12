@@ -1,15 +1,15 @@
 /alpha_rise/fls_pcl_node:
   ros__parameters:
-    horizontal_beamwidth: 70 #degrees
-    sonar_max_range: 40 #m
-    max_depth: -2.5 #World Frame (ENU)
-    min_depth: -10.0 #World Frame (ENU)
-    threshold_intensity: 30 #0-255 pixel values
-    threshold_min_range: 3.0 #m
-    threshold_max_range: 20.0 #m
+    max_depth: -1.0 #World Frame (ENU)
+    min_depth: -20.0 #World Frame (ENU)
+    threshold_intensity: 125 #0-255 pixel values
+    threshold_min_range: 5.0 #m
+    threshold_max_range: 40.0 #m
     frame_id: 'alpha_rise/fls_link'
+    ping_sub_topic: '/alpha_rise/oculus/ping'
     image_sub_topic: '/alpha_rise/oculus/raw_image'
     pointcloud_pub_topic: '/alpha_rise/fls/pointcloud/post'
+    filter_mode: 'max_intensity' # all/max_intensity
 
     ## Stonefish
     # frame_id: 'alpha_rise/fls_link_sf'
@@ -19,5 +19,5 @@
     # process every (int) beam into pointcloud. (1 - 512)
     beam_skip_count: 1
 
-    save_as_pcd: True
-    pcd_filename: "output.pcd"
+    save_as_pcd: False
+    pcd_filename: "output_full_distance.pcd"

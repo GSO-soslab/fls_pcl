@@ -13,6 +13,7 @@ import tf2_sensor_msgs.tf2_sensor_msgs
 import sensor_msgs_py.point_cloud2 as pc2
 from tf2_ros import TransformException
 import struct
+from math import nan
 from oculus_interfaces.msg import Ping
 
 class FLS_PCL(Node):
@@ -24,8 +25,6 @@ class FLS_PCL(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # Declare and read parameters
-        self.declare_parameter('horizontal_beamwidth', Parameter.Type.INTEGER)
-        self.declare_parameter('sonar_max_range',Parameter.Type.INTEGER)
         self.declare_parameter('max_depth',Parameter.Type.DOUBLE)
         self.declare_parameter('min_depth',Parameter.Type.DOUBLE)
 
@@ -35,14 +34,13 @@ class FLS_PCL(Node):
 
         self.declare_parameter('beam_skip_count',Parameter.Type.INTEGER)
         self.declare_parameter('frame_id',Parameter.Type.STRING)
+        self.declare_parameter('ping_sub_topic',Parameter.Type.STRING)
         self.declare_parameter('image_sub_topic',Parameter.Type.STRING)
         self.declare_parameter('pointcloud_pub_topic', Parameter.Type.STRING)
         self.declare_parameter('save_as_pcd', Parameter.Type.BOOL)
         self.declare_parameter('pcd_filename', Parameter.Type.STRING)
+        self.declare_parameter('filter_mode', Parameter.Type.STRING)
 
-
-        self.horizontal_beamwidth = self.get_parameter('horizontal_beamwidth').value
-        self.max_range = self.get_parameter('sonar_max_range').value
         self.max_depth = self.get_parameter('max_depth').value
         self.min_depth = self.get_parameter('min_depth').value
         self.intensity_threshold = self.get_parameter('threshold_intensity').value
@@ -50,24 +48,26 @@ class FLS_PCL(Node):
         self.threshold_max_range = self.get_parameter('threshold_max_range').value
         self.beam_skip_count = self.get_parameter('beam_skip_count').value
         self.frame_id = self.get_parameter('frame_id').value
+        ping_sub_topic = self.get_parameter('ping_sub_topic').value
         sub_topic = self.get_parameter('image_sub_topic').value
         pub_topic = self.get_parameter('pointcloud_pub_topic').value
         self.save_as_pcd_bool = self.get_parameter('save_as_pcd').value
         self.pcd_filename = self.get_parameter('pcd_filename').value
-
-
+        self.filter_mode = self.get_parameter('filter_mode').value
 
         # CV bridge
         self.bridge = CvBridge()
 
         # Publishers
         self.pub_pcl = self.create_publisher(PointCloud2, pub_topic, 10)
+        # self.pub_fls_frost_image = self.create_publisher(Image, pub_topic+'/image/frost', 10)
         self.pub_fls_edge_image = self.create_publisher(Image, pub_topic+'/image/edge', 10)
+        self.pub_fls_median_image = self.create_publisher(Image, pub_topic+'/image/median', 10)
 
         # Subscriber
         self.create_subscription(Image,sub_topic,self.image_CB,10)
         self.create_subscription(PointCloud2, pub_topic,self.save_as_pcd, 10)
-        self.create_subscription(Ping, '/alpha_rise/oculus/ping',self.ping_CB, 10)
+        self.create_subscription(Ping, ping_sub_topic ,self.ping_CB, 10)
 
         # Populate PointCloud2 message
         self.pointcloud_msg = PointCloud2()
@@ -90,21 +90,31 @@ class FLS_PCL(Node):
 
     def ping_CB(self,msg):
         self.bearings = np.array([np.radians(bearings * 0.01) for bearings in msg.bearings]).squeeze()
-        self.receive_ping = True
+        
+        if self.receive_ping == False:
+            self.max_range = msg.range
+
+            # High / Low frequency mode
+            if msg.master_mode == 2:
+                self.horizontal_beamwidth = 70 
+            elif msg.master_mode == 1:
+                self.horizontal_beamwidth = 130
+        
+            self.receive_ping = True
 
     def image_CB(self, msg):
         if self.receive_ping:
             current = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
             
-            # Set the 12th and 11th columns from the end to 0
-            current[:, -12] = 0
-            current[:, -11] = 0
-            
             rows, columns = current.shape
             self.n_bins, self.n_beams = rows, columns
 
+            # Median Filtering
+            current = cv2.medianBlur(current, ksize=9) 
+
             # === Convert all valid pixels to sensor frame coordinates ===
-            edge_list, sensor_frame = self.extract_all_points_in_sensor_frame(current, mode='max_intensity')
+            edge_list, sensor_frame = self.extract_all_points_in_sensor_frame(current, mode=self.filter_mode)
+            
             edge_image = np.zeros((rows, columns), dtype=np.float32)
 
             if len(edge_list) == 0:
@@ -150,43 +160,53 @@ class FLS_PCL(Node):
             edge_image = cv2.normalize(edge_image, None, 0, 255, cv2.NORM_MINMAX)
             edge_image = edge_image.astype(np.uint8)
 
+            median_current = cv2.normalize(current, None, 0, 255, cv2.NORM_MINMAX)
+            median_current = median_current.astype(np.uint8)
+
             # === Publish results ===
             self.pub_fls_edge_image.publish(self.bridge.cv2_to_imgmsg(edge_image, encoding="mono8"))
+            self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(median_current, encoding="mono8"))
+
             self.pointcloud_msg.data = self.points.tobytes()
+            if self.filter_mode == "all":
+                self.pub_pcl.publish(self.pointcloud_msg)
+            
+            elif self.filter_mode == "max_intensity":
+                try:
+                    transform = self.tf_buffer.lookup_transform(
+                        'alpha_rise/world',
+                        self.frame_id,
+                        rclpy.time.Time()
+                    )
 
-            try:
-                transform = self.tf_buffer.lookup_transform(
-                    'alpha_rise/world',
-                    self.frame_id,
-                    rclpy.time.Time()
-                )
+                    # Apply transform
+                    self.pointcloud_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
 
-                # Apply transform
-                pc_transformed = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
+                    # Read points including intensity
+                    points = list(pc2.read_points(
+                        self.pointcloud_msg,
+                        field_names=('x', 'y', 'z', 'intensity'),
+                        skip_nans=False
+                    ))
 
-                # Read points including intensity
-                points = list(pc2.read_points(
-                    pc_transformed,
-                    field_names=('x', 'y', 'z', 'intensity'),
-                    skip_nans=False
-                ))
+                    # Modify points: set points with z > -1.0 to zero
+                    new_points = []
+                    for x, y, z, intensity in points:
+                        if z > self.max_depth:
+                            x, y, z = nan, nan, nan
+                        elif z< self.min_depth:
+                            x, y, z = nan, nan, nan
+                        new_points.append([x, y, z, intensity])
 
-                # Modify points: set points with z > -1.0 to zero
-                new_points = []
-                for x, y, z, intensity in points:
-                    if z > self.max_depth:
-                        x, y, z = 0.0, 0.0, 0.0
-                    elif z< self.min_depth:
-                        x, y, z = 0.0, 0.0, 0.0
-                    new_points.append([x, y, z, intensity])
+                    # Create new PointCloud2 preserving intensity
+                    self.pointcloud_msg = pc2.create_cloud(self.pointcloud_msg.header, self.fields, new_points)
+                    self.pointcloud_msg.header.stamp  = msg.header.stamp
+                    self.pointcloud_msg.is_dense = True
+                    self.pub_pcl.publish(self.pointcloud_msg)
+                    # self.pub_pcl_depth_filtered.publish(pc_modified)
 
-                # Create new PointCloud2 preserving intensity
-                pc_modified = pc2.create_cloud(pc_transformed.header, self.fields, new_points)
-                self.pub_pcl.publish(pc_modified)
-                # self.pub_pcl_depth_filtered.publish(pc_modified)
-
-            except TransformException as e:
-                self.get_logger().warn(f'Transform not available: {e}')
+                except TransformException as e:
+                    self.get_logger().warn(f'Transform not available: {e}')
                 
 
         
@@ -263,7 +283,6 @@ class FLS_PCL(Node):
             sensor_x = sensor_x[valid_mask]
             sensor_y = sensor_y[valid_mask]
             intensities = intensities[valid_mask]
-
             if len(intensities) == 0:
                 # no valid points
                 return np.empty((0, 3)), np.empty((0, 3))
