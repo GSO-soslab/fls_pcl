@@ -28,7 +28,7 @@ class FLS_PCL(Node):
         self.declare_parameter('max_depth',Parameter.Type.DOUBLE)
         self.declare_parameter('min_depth',Parameter.Type.DOUBLE)
 
-        self.declare_parameter('threshold_intensity',Parameter.Type.INTEGER)
+        # self.declare_parameter('threshold_intensity',Parameter.Type.INTEGER)
         self.declare_parameter('threshold_min_range',Parameter.Type.DOUBLE)
         self.declare_parameter('threshold_max_range',Parameter.Type.DOUBLE)
 
@@ -43,7 +43,7 @@ class FLS_PCL(Node):
 
         self.max_depth = self.get_parameter('max_depth').value
         self.min_depth = self.get_parameter('min_depth').value
-        self.intensity_threshold = self.get_parameter('threshold_intensity').value
+        # self.intensity_threshold = self.get_parameter('threshold_intensity').value
         self.threshold_min_range = self.get_parameter('threshold_min_range').value
         self.threshold_max_range = self.get_parameter('threshold_max_range').value
         self.beam_skip_count = self.get_parameter('beam_skip_count').value
@@ -90,8 +90,8 @@ class FLS_PCL(Node):
 
     def ping_CB(self,msg):
         self.bearings = np.array([np.radians(bearings * 0.01) for bearings in msg.bearings]).squeeze()
-        
         if self.receive_ping == False:
+            # np.savetxt("bearings.txt", self.bearings, fmt="%.8f")
             self.max_range = msg.range
 
             # High / Low frequency mode
@@ -109,8 +109,8 @@ class FLS_PCL(Node):
             rows, columns = current.shape
             self.n_bins, self.n_beams = rows, columns
 
-            # Median Filtering
-            current = cv2.medianBlur(current, ksize=9) 
+            # Median Filtering, Higher ksize, stronger smoothening, higher comp
+            current = cv2.medianBlur(current, ksize=5)
 
             # === Convert all valid pixels to sensor frame coordinates ===
             edge_list, sensor_frame = self.extract_all_points_in_sensor_frame(current, mode=self.filter_mode)
@@ -200,11 +200,21 @@ class FLS_PCL(Node):
 
                     # Create new PointCloud2 preserving intensity
                     self.pointcloud_msg = pc2.create_cloud(self.pointcloud_msg.header, self.fields, new_points)
-                    self.pointcloud_msg.header.stamp  = msg.header.stamp
-                    self.pointcloud_msg.is_dense = True
-                    self.pub_pcl.publish(self.pointcloud_msg)
-                    # self.pub_pcl_depth_filtered.publish(pc_modified)
+                    try:
+                        transform = self.tf_buffer.lookup_transform(
+                        self.frame_id,
+                        'alpha_rise/world',
+                        rclpy.time.Time()
+                        )
 
+                        # Apply transform
+                        self.pointcloud_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
+
+                        self.pointcloud_msg.is_dense = True
+                        self.pub_pcl.publish(self.pointcloud_msg)
+                        # self.pub_pcl_depth_filtered.publish(pc_modified)
+                    except TransformException as e:
+                        self.get_logger().warn(f'Transform not available: {e}')
                 except TransformException as e:
                     self.get_logger().warn(f'Transform not available: {e}')
                 
@@ -267,7 +277,7 @@ class FLS_PCL(Node):
 
         # Now apply intensity selection mode
         if mode == 'all':
-            valid_mask = intensities > self.intensity_threshold
+            valid_mask = intensities > 0#self.intensity_threshold
             rows_flat = rows_flat[valid_mask]
             cols_flat = cols_flat[valid_mask]
             sensor_x = sensor_x[valid_mask]
@@ -277,7 +287,7 @@ class FLS_PCL(Node):
 
         elif mode == 'max_intensity':
             # Step 0: apply intensity threshold
-            valid_mask = intensities > self.intensity_threshold
+            valid_mask = intensities > 0#self.intensity_threshold
             rows_flat = rows_flat[valid_mask]
             cols_flat = cols_flat[valid_mask]
             sensor_x = sensor_x[valid_mask]
