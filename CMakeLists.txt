@@ -42,6 +42,7 @@ install(DIRECTORY config/
 install(PROGRAMS
   fls_pcl/fls_pcl.py
   fls_pcl/depth_planner.py
+  fls_pcl/plot_fls_beam.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
