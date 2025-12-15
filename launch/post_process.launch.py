@@ -19,19 +19,29 @@ def generate_launch_description():
 
     ld = LaunchDescription()
 
-    param_config = os.path.join(
-        get_package_share_directory('fls_pcl'),
-        'config',
-        'fls_params.yaml'
-    )
+    # param_config = os.path.join(
+    #     get_package_share_directory('fls_pcl'),
+    #     'config',
+    #     'fls_params.yaml'
+    # )
     
-    node = Node(
-        package='fls_pcl',
-        executable='fls_pcl.py',
-        name='fls_pcl_node',
-        namespace="alpha_rise",
-        output='screen',
-        parameters=[param_config]
+    # node = Node(
+    #     package='fls_pcl',
+    #     executable='fls_pcl.py',
+    #     name='fls_pcl_node',
+    #     namespace="alpha_rise",
+    #     output='screen',
+    #     parameters=[param_config]
+    # )
+
+    fls_pcl = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('fls_pcl'),
+                'launch',
+                'fls_pcl.launch.py'
+            )
+        )
     )
 
     fls_intensity_plot_node = Node(
@@ -40,7 +50,6 @@ def generate_launch_description():
         name='fls_intensity_node',
         namespace="alpha_rise",
         output='screen',
-        parameters=[param_config]
     )
 
     path = IncludeLaunchDescription(
@@ -60,11 +69,11 @@ def generate_launch_description():
     )
 
     octomap = IncludeLaunchDescription(
-        XMLLaunchDescriptionSource(
+        PythonLaunchDescriptionSource(
             os.path.join(
-                get_package_share_directory('octomap_server'),
+                get_package_share_directory('fls_pcl'),
                 'launch',
-                'octomap_mapping.launch.xml'
+                'octomap_mapping.launch.py'
             )
         ),
         launch_arguments={'use_sim_time': 'true'}.items()
@@ -121,10 +130,10 @@ def generate_launch_description():
         output='screen'
     )
 
-    ld.add_action(node)
+    ld.add_action(fls_pcl)
     # ld.add_action(path)
     ld.add_action(rviz)
-    # ld.add_action(fls_intensity_plot_node)
+    # # ld.add_action(fls_intensity_plot_node)
     ld.add_action(bag_play)
 
     ld.add_action(description)

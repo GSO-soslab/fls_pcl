@@ -1,0 +1,20 @@
+/alpha_rise/octomap_server:
+  ros__parameters:
+    resolution: 1.0
+    # www.ros.org/wiki/octomap_server
+    # Fixed map frame (use 'map' if SLAM or localization is running)
+    frame_id: alpha_rise/odom
+
+    # Robot base frame for ground plane detection
+    base_frame_id: alpha_rise/base_link
+
+    # Maximum sensor range
+    sensor_model:
+      # maximum range to integrate (speedup!)
+      max_range: 40.0
+      # Probabilities for hits and misses in the sensor model when dynamically building a map
+      hit: 0.7
+      miss: 0.4
+      # Minimum and maximum probability for clamping when dynamically building a map
+      min: 0.12
+      max: 0.97
