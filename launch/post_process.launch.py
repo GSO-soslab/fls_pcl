@@ -34,6 +34,15 @@ def generate_launch_description():
         parameters=[param_config]
     )
 
+    fls_intensity_plot_node = Node(
+        package='fls_pcl',
+        executable='plot_fls_beam.py',
+        name='fls_intensity_node',
+        namespace="alpha_rise",
+        output='screen',
+        parameters=[param_config]
+    )
+
     path = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(get_package_share_directory('alpha_rise_bringup'), 'launch','bringup_path.launch.py')]),
         launch_arguments = {'arg_robot_name': 'alpha_rise'}.items()  
@@ -50,6 +59,18 @@ def generate_launch_description():
         }.items()  
     )
 
+    octomap = IncludeLaunchDescription(
+        XMLLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('octomap_server'),
+                'launch',
+                'octomap_mapping.launch.xml'
+            )
+        ),
+        launch_arguments={'use_sim_time': 'true'}.items()
+    )
+
+
     rviz_config_dir = os.path.join( get_package_share_directory('alpha_rise_description'), 'rviz', 'config_post.rviz' )
 
     rviz = Node(
@@ -57,19 +78,18 @@ def generate_launch_description():
             executable='rviz2',
             name='rviz2',
             arguments=['-d', [rviz_config_dir]],
+            additional_env={
+            "LD_PRELOAD": "/usr/lib/x86_64-linux-gnu/liboctomap.so"
+    },
         )
     
         #Foxglove Bridge
-    foxglove = IncludeLaunchDescription(
-        XMLLaunchDescriptionSource(
-            PathJoinSubstitution([
-                FindPackageShare('alpha_rise_bringup'),
-                'launch',
-                'include',
-                'foxglove_bridge_launch.xml'
-            ])
-        )
-    )
+    foxglove = Node(
+            package='foxglove_bridge',
+            executable='foxglove_bridge',
+            name='foxglove_bridge',
+            output='screen')
+
         # Bag file path (change this to the full path or make it configurable)
     # bag_file_path = '/home/tony/bags/whale_rock_10_10/rosbag2_2025_10_10-18_09_27/rosbag2_2025_10_10-18_09_28'
     # bag_file_path = '/home/tony/bags/whale_rock_10_10/rosbag2_2025_10_10-17_46_01/rosbag2_2025_10_10-17_46_03/'
@@ -104,9 +124,13 @@ def generate_launch_description():
     ld.add_action(node)
     # ld.add_action(path)
     ld.add_action(rviz)
+    # ld.add_action(fls_intensity_plot_node)
     ld.add_action(bag_play)
+
     ld.add_action(description)
-    ld.add_action(foxglove)
+    ld.add_action(octomap)
+
+    # ld.add_action(foxglove)
 
 
 
