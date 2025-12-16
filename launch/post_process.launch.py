@@ -52,6 +52,15 @@ def generate_launch_description():
         output='screen',
     )
 
+
+    sonar_fov = Node(
+        package='fls_pcl',
+        executable='sonar_visualization.py',
+        name='sonar_visualization',
+        namespace="alpha_rise",
+        output='screen',
+    )
+
     path = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(get_package_share_directory('alpha_rise_bringup'), 'launch','bringup_path.launch.py')]),
         launch_arguments = {'arg_robot_name': 'alpha_rise'}.items()  
@@ -134,6 +143,7 @@ def generate_launch_description():
     # ld.add_action(path)
     ld.add_action(rviz)
     # # ld.add_action(fls_intensity_plot_node)
+    ld.add_action(sonar_fov)
     ld.add_action(bag_play)
 
     ld.add_action(description)
