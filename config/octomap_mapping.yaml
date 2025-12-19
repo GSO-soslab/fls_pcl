@@ -1,6 +1,7 @@
 /alpha_rise/octomap_server:
   ros__parameters:
-    resolution: 1.0
+    # 40m. 517 bins per beam. 512 beams. 40/517 = 0.07m/bin. 0.2 for testing.
+    resolution: 0.2
     # www.ros.org/wiki/octomap_server
     # Fixed map frame (use 'map' if SLAM or localization is running)
     frame_id: alpha_rise/odom

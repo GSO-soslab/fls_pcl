@@ -9,7 +9,7 @@
     ping_sub_topic: '/alpha_rise/oculus/ping'
     image_sub_topic: '/alpha_rise/oculus/raw_image'
     pointcloud_pub_topic: '/alpha_rise/fls/pointcloud/post'
-    filter_mode: 'max_intensity' # all/max_intensity
+    filter_mode: 'probabilistic_intensity' # threshold_intensity/max_intensity/probabilistic_intensity
 
     ## Stonefish
     # frame_id: 'alpha_rise/fls_link_sf'

@@ -13,6 +13,7 @@ import tf2_sensor_msgs.tf2_sensor_msgs
 import sensor_msgs_py.point_cloud2 as pc2
 from tf2_ros import TransformException
 import struct
+from scipy.ndimage import uniform_filter
 from math import nan
 from oculus_interfaces.msg import Ping
 
@@ -28,7 +29,7 @@ class FLS_PCL(Node):
         self.declare_parameter('max_depth',Parameter.Type.DOUBLE)
         self.declare_parameter('min_depth',Parameter.Type.DOUBLE)
 
-        # self.declare_parameter('threshold_intensity',Parameter.Type.INTEGER)
+        self.declare_parameter('threshold_intensity',Parameter.Type.INTEGER)
         self.declare_parameter('threshold_min_range',Parameter.Type.DOUBLE)
         self.declare_parameter('threshold_max_range',Parameter.Type.DOUBLE)
 
@@ -43,7 +44,7 @@ class FLS_PCL(Node):
 
         self.max_depth = self.get_parameter('max_depth').value
         self.min_depth = self.get_parameter('min_depth').value
-        # self.intensity_threshold = self.get_parameter('threshold_intensity').value
+        self.intensity_threshold = self.get_parameter('threshold_intensity').value
         self.threshold_min_range = self.get_parameter('threshold_min_range').value
         self.threshold_max_range = self.get_parameter('threshold_max_range').value
         self.beam_skip_count = self.get_parameter('beam_skip_count').value
@@ -108,119 +109,157 @@ class FLS_PCL(Node):
             
             rows, columns = current.shape
             self.n_bins, self.n_beams = rows, columns
+            
+            # Lee filter. Better for multiplicative noise.
+            # current = self.lee_filter(current, kernel_size=15)
 
             # Median Filtering, Higher ksize, stronger smoothening, higher comp
-            current = cv2.medianBlur(current, ksize=5)
+            current = cv2.medianBlur(current, ksize=11)
+            self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
 
             # === Convert all valid pixels to sensor frame coordinates ===
-            edge_list, sensor_frame = self.extract_all_points_in_sensor_frame(current, mode=self.filter_mode)
-            
-            edge_image = np.zeros((rows, columns), dtype=np.float32)
+            edge_list, sensor_frame = self.extract_points_in_sensor_frame(current, mode=self.filter_mode)
+            pointcloud_image = np.zeros((rows, columns), dtype=np.float32)
 
             if len(edge_list) == 0:
                 self.get_logger().warn("No measurements", throttle_duration_sec=3)
                 self.points = np.empty((0, len(self.fields)), dtype=np.float32)
                 return
+        
 
             # === Configure PointCloud2 metadata ===
             h = Header()
             h.frame_id = self.frame_id
             self.pointcloud_msg.header = h
-            self.pointcloud_msg.height = 1
+            self.pointcloud_msg.height = 1  # unorganized cloud
 
-            # === Vectorized filtering ===
+            # === Extract sensor frame data ===
             sensor_x = sensor_frame[:, 0]
             sensor_y = sensor_frame[:, 1]
-            intensity = sensor_frame[:, 2]
+            point_prob = sensor_frame[:, 2]   # already a probability in [0,1]
 
-            # Filter valid points
-            valid_x = sensor_x
-            valid_y = sensor_y
-            valid_i = intensity
+            # === Base points (center beam geometry) ===
+            points = np.zeros((len(sensor_frame), 3), dtype=np.float32)
+            points[:, 0] = sensor_x
+            points[:, 1] = sensor_y
+            points[:, 2] = 0.0  # Z = 0 for 2D sensor
 
-            # === Allocate and fill the point array ===
-            num_points = len(valid_x)
+            # === Rotation about Y axis (elevation) ===
+            def rotate_points_y(points, angle_deg):
+                theta = np.deg2rad(angle_deg)
+                c, s = np.cos(theta), np.sin(theta)
+                R = np.array(
+                    [[ c, 0,  s],
+                    [ 0, 1,  0],
+                    [-s, 0,  c]],
+                    dtype=np.float32
+                )
+                return points @ R.T
+
+            # === Elevation angles ===
+            elevation_angles = np.arange(-6, 7, 1)   # -6 … 0 … +6
+
+            # === Gaussian beam probabilities (swath membership) ===
+            min_prob = 0.1
+            max_prob = 0.9
+            sigma = 3.0
+
+            beam_probs = min_prob + (max_prob - min_prob) * np.exp(
+                -0.5 * (elevation_angles / sigma) ** 2
+            )
+            # beam_probs shape: (num_beams,)
+
+            # === Generate beams with UNION probability ===
+            all_points = []
+            all_probs = []
+
+            for angle, beam_p in zip(elevation_angles, beam_probs):
+                rotated_pts = rotate_points_y(points, angle)
+
+                # Union of independent probabilities:
+                # P = 1 - (1 - P_point)(1 - P_beam)
+                final_prob = 1.0 - (1.0 - point_prob) * (1.0 - beam_p)
+
+                all_points.append(rotated_pts)
+                all_probs.append(final_prob)
+
+            # === Stack results ===
+            all_points = np.vstack(all_points)      # (N * num_beams, 3)
+            all_probs = np.hstack(all_probs)        # (N * num_beams,)
+
+            # === Allocate and fill PointCloud2 ===
+            num_points = len(all_points)
             self.pointcloud_msg.width = num_points
             self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
 
             self.points = np.full((num_points, len(self.fields)), np.nan, dtype=np.float32)
-            if num_points > 0:
-                self.points[:, 0] = valid_x
-                self.points[:, 1] = valid_y
-                self.points[:, 2] = 0.0  # Z = 0 for 2D sensor
-                self.points[:, 3] = valid_i
+            self.points[:, 0:3] = all_points
+            self.points[:, 3] = all_probs
 
-            # === Build visualization image ===
+            # === Visualization image (unchanged) ===
             rows_i = edge_list[:, 0].astype(int)
             cols_i = edge_list[:, 1].astype(int)
             intensities_i = edge_list[:, 2]
-            edge_image[rows_i, cols_i] = intensities_i
 
-            # Normalize to 0–255 for display
-            edge_image = cv2.normalize(edge_image, None, 0, 255, cv2.NORM_MINMAX)
-            edge_image = edge_image.astype(np.uint8)
+            pointcloud_image[rows_i, cols_i] = intensities_i
+            pointcloud_image = np.clip(pointcloud_image, 0, 255).astype(np.uint8)
 
-            median_current = cv2.normalize(current, None, 0, 255, cv2.NORM_MINMAX)
-            median_current = median_current.astype(np.uint8)
-
-            # === Publish results ===
-            self.pub_fls_edge_image.publish(self.bridge.cv2_to_imgmsg(edge_image, encoding="mono8"))
-            self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(median_current, encoding="mono8"))
-
+            # === Publish ===
+            self.pub_fls_edge_image.publish(
+                self.bridge.cv2_to_imgmsg(pointcloud_image, encoding="mono8")
+            )
             self.pointcloud_msg.data = self.points.tobytes()
-            if self.filter_mode == "all":
-                self.pub_pcl.publish(self.pointcloud_msg)
-            
-            elif self.filter_mode == "max_intensity":
+
+            # Depth filtering
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    'alpha_rise/world',
+                    self.frame_id,
+                    rclpy.time.Time()
+                )
+
+                # Apply transform
+                self.pointcloud_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
+
+                # Read points including intensity
+                points = list(pc2.read_points(
+                    self.pointcloud_msg,
+                    field_names=('x', 'y', 'z', 'intensity'),
+                    skip_nans=False
+                ))
+
+                # Modify points: set points with z > -1.0 to zero
+                new_points = []
+                for x, y, z, intensity in points:
+                    if z > self.max_depth:
+                        x, y, z = nan, nan, nan
+                    elif z< self.min_depth:
+                        x, y, z = nan, nan, nan
+                    new_points.append([x, y, z, intensity])
+
+                # Create new PointCloud2 preserving intensity
+                self.pointcloud_msg = pc2.create_cloud(self.pointcloud_msg.header, self.fields, new_points)
                 try:
                     transform = self.tf_buffer.lookup_transform(
-                        'alpha_rise/world',
-                        self.frame_id,
-                        rclpy.time.Time()
+                    self.frame_id,
+                    'alpha_rise/world',
+                    rclpy.time.Time()
                     )
 
-                    # Apply transform
+                    # Transform back to sensor frame
                     self.pointcloud_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
 
-                    # Read points including intensity
-                    points = list(pc2.read_points(
-                        self.pointcloud_msg,
-                        field_names=('x', 'y', 'z', 'intensity'),
-                        skip_nans=False
-                    ))
+                    self.pointcloud_msg.is_dense = True
+                    self.pub_pcl.publish(self.pointcloud_msg)
 
-                    # Modify points: set points with z > -1.0 to zero
-                    new_points = []
-                    for x, y, z, intensity in points:
-                        if z > self.max_depth:
-                            x, y, z = nan, nan, nan
-                        elif z< self.min_depth:
-                            x, y, z = nan, nan, nan
-                        new_points.append([x, y, z, intensity])
-
-                    # Create new PointCloud2 preserving intensity
-                    self.pointcloud_msg = pc2.create_cloud(self.pointcloud_msg.header, self.fields, new_points)
-                    try:
-                        transform = self.tf_buffer.lookup_transform(
-                        self.frame_id,
-                        'alpha_rise/world',
-                        rclpy.time.Time()
-                        )
-
-                        # Apply transform
-                        self.pointcloud_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
-
-                        self.pointcloud_msg.is_dense = True
-                        self.pub_pcl.publish(self.pointcloud_msg)
-                        # self.pub_pcl_depth_filtered.publish(pc_modified)
-                    except TransformException as e:
-                        self.get_logger().warn(f'Transform not available: {e}')
                 except TransformException as e:
                     self.get_logger().warn(f'Transform not available: {e}')
-                
+            except TransformException as e:
+                self.get_logger().warn(f'Transform not available: {e}')
+            
 
         
-    def extract_all_points_in_sensor_frame(self, image, mode='all'):
+    def extract_points_in_sensor_frame(self, image, mode='threshold_intensity'):
         """
         Convert pixels in the image into sensor-frame coordinates (x, y, intensity),
         optionally filtering by beam skipping and range threshold first, then applying
@@ -231,7 +270,7 @@ class FLS_PCL(Node):
         image : np.ndarray
             2D array (rows × columns) representing intensity values.
         mode : str, optional
-            'all' - keep all points above threshold
+            'threshold_intensity' - keep all points above threshold
             'max_intensity' - keep only the highest-intensity point per column
 
         Returns
@@ -242,8 +281,18 @@ class FLS_PCL(Node):
         """
         if image is None:
             raise ValueError("Image not found or unable to load.")
+        
+        """
+            |<----->| number of beams = 512
+            ------>x   -
+            |          ^
+            |          | 517 beams
+            |          v 
+         y  v          -      <-------- Sensor Origin
+        """
 
-        range_factor = self.max_range / self.n_bins
+        #40m / 517 beams = 0.07m/beams
+        meters_per_beam = self.max_range / self.n_bins 
 
         # Create coordinate grids
         rows, cols = np.indices(image.shape)
@@ -252,7 +301,7 @@ class FLS_PCL(Node):
         intensities = image.flatten()
 
         theta_values = self.bearings[cols_flat]
-        r_values = range_factor * (self.n_bins - rows_flat)
+        r_values = meters_per_beam * (self.n_bins - rows_flat)
 
         # Convert to sensor frame (x, y)
         sensor_x = r_values * np.cos(theta_values)
@@ -276,15 +325,40 @@ class FLS_PCL(Node):
         cols_flat = cols_flat[final_mask]
 
         # Now apply intensity selection mode
-        if mode == 'all':
-            valid_mask = intensities > 0#self.intensity_threshold
+        if mode == 'threshold_intensity':
+            valid_mask = intensities > self.intensity_threshold
             rows_flat = rows_flat[valid_mask]
             cols_flat = cols_flat[valid_mask]
             sensor_x = sensor_x[valid_mask]
             sensor_y = sensor_y[valid_mask]
             intensities = intensities[valid_mask]
+        
+        elif mode == 'probabilistic_intensity':
+            # center_col = image.shape[1] // 2  # 512 → 256
+            final_mask = intensities>self.intensity_threshold
+            # final_mask = cols_flat == center_col 
+            # final_mask = final_mask & valid_mask
 
+            rows_flat = rows_flat[final_mask]
+            cols_flat = cols_flat[final_mask]
+            sensor_x = sensor_x[final_mask]
+            sensor_y = sensor_y[final_mask]
+            intensities = intensities[final_mask]
 
+            # --- intensity → probability mapping ---
+            min_intensity = self.intensity_threshold
+            max_intensity = 255.0
+            min_prob = 0.5
+            max_prob = 0.9
+
+            ### TO-DO ANYTHING BELOW THRESHOOLD IS 0.1. AVE TO BE UPDAETED
+            probabilities = min_prob + (
+                (intensities - min_intensity) / (max_intensity - min_intensity)
+            ) * (max_prob - min_prob)
+
+            probabilities = np.clip(probabilities, min_prob, max_prob)
+            intensities =probabilities
+            
         elif mode == 'max_intensity':
             # Step 0: apply intensity threshold
             valid_mask = intensities > 0#self.intensity_threshold
@@ -336,6 +410,35 @@ class FLS_PCL(Node):
         sensor_frame_coordinates = np.column_stack((sensor_x, sensor_y, intensities))
 
         return image_coordinates, sensor_frame_coordinates
+    
+    def lee_filter(self, image, kernel_size=5):
+        """
+        Lee filter for speckle noise reduction.
+        
+        Parameters:
+            image (np.ndarray): Grayscale image (uint8 or float)
+            kernel_size (int): Odd window size
+        
+        Returns:
+            np.ndarray: Filtered image
+        """
+        image = image.astype(np.float32)
+
+        # Local mean
+        local_mean = uniform_filter(image, kernel_size)
+
+        # Local variance
+        local_mean_sq = uniform_filter(image**2, kernel_size)
+        local_var = local_mean_sq - local_mean**2
+
+        # Estimate noise variance (global)
+        noise_var = np.mean(local_var)
+
+        # Lee filter
+        weight = local_var / (local_var + noise_var)
+        filtered = local_mean + weight * (image - local_mean)
+
+        return np.clip(filtered, 0, 255).astype(np.uint8)
     
     def save_as_pcd(self, msg):
         if not self.save_as_pcd_bool:
