@@ -5,9 +5,11 @@
     threshold_intensity: 125 #0-255 pixel values
     threshold_min_range: 5.0 #m
     threshold_max_range: 40.0 #m
+    vertical_beamwidth: 12.0 # degrees
     frame_id: 'alpha_rise/fls_link'
     ping_sub_topic: '/alpha_rise/oculus/ping'
     image_sub_topic: '/alpha_rise/oculus/raw_image'
+    marker_sub_topic: '/alpha_rise/fls/geometry'
     pointcloud_pub_topic: '/alpha_rise/fls/pointcloud/post'
     filter_mode: 'probabilistic_intensity' # threshold_intensity/max_intensity/probabilistic_intensity
 

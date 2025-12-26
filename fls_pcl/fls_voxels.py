@@ -7,13 +7,14 @@ import math
 import numpy as np
 import rclpy
 from rclpy.node import Node
-
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
 
 
 class FLS_Voxels(Node):
-
+    '''
+    ROS2 node that publishes voxels defining SONAR FOV
+    '''
     def __init__(self):
         super().__init__('fls_voxel_node')
 
@@ -26,14 +27,18 @@ class FLS_Voxels(Node):
         self.declare_parameter('frame_id', 'alpha_rise/fls_link')
 
         self.max_range = self.get_parameter('range_max').value
-        self.h_fov = math.radians(self.get_parameter('horizontal_fov_deg').value)
-        self.v_fov = math.radians(self.get_parameter('vertical_fov_deg').value)
+        self.h_fov = math.radians(self.get_parameter('horizontal_fov_deg').value ) 
+        self.v_fov = math.radians(self.get_parameter('vertical_fov_deg').value ) 
         self.resolution = self.get_parameter('resolution').value
         self.frame_id = self.get_parameter('frame_id').value
 
         # ---- Publishers ----
         self.marker_pub = self.create_publisher(Marker, 'fls/geometry', 10)
-        self.create_timer(0.2, self.publish_voxel_fov_marker)
+        self.create_timer(0.2, self.publish_all)
+    
+    def publish_all(self):
+        # self.publish_marker()
+        self.publish_voxel_fov_marker()
 
     def make_point(self, x, y, z):
         p = Point()
@@ -41,6 +46,54 @@ class FLS_Voxels(Node):
         p.y = y
         p.z = z
         return p
+    
+    def publish_marker(self):
+        marker = Marker()
+
+        # Frame the marker is attached to
+        marker.header.frame_id = 'alpha_rise/fls_link'
+        # marker.header.stamp = self.get_clock().now().to_msg()
+
+        marker.ns = 'line'
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+
+        # Line width (meters)
+        marker.scale.x = 0.05
+
+        # Color (RGBA)
+        marker.color.r = 1.0
+        marker.color.g = 0.0
+        marker.color.b = 0.0
+        marker.color.a = 1.0
+
+        # ---- FOV parameters ----
+        length = 40.0
+
+        v_half = math.radians(12.0 / 2.0)  # vertical
+        h_half = math.radians(70.0 / 2.0)  # horizontal
+
+        v_extent = length * math.tan(v_half)
+        h_extent = length * math.tan(h_half)
+
+        origin = Point(x=0.0, y=0.0, z=0.0)
+        marker.points = []
+
+        # 4 corner boundary rays
+        corners = [
+            ( length,  h_extent,  v_extent),  # top-right
+            ( length, -h_extent,  v_extent),  # top-left
+            ( length,  h_extent, -v_extent),  # bottom-right
+            ( length, -h_extent, -v_extent),  # bottom-left
+        ]
+
+        for x, y, z in corners:
+            end = Point(x=x, y=y, z=z)
+            marker.points.append(origin)
+            marker.points.append(end)
+
+        self.marker_pub.publish(marker)
 
     def publish_voxel_fov_marker(self):
 
@@ -78,15 +131,15 @@ class FLS_Voxels(Node):
 
             y_steps = int(math.ceil((2.0 * y_limit) / self.resolution))
             z_steps = int(math.ceil((2.0 * z_limit) / self.resolution))
-
+            # print(f"y_steps:{y_steps}, z_steps:{z_steps}")
             for iy in range(-y_steps // 2, y_steps // 2 + 1):
                 y = iy * self.resolution
-                if abs(y) > y_limit:
+                if abs(y) > y_limit + self.resolution * 0.5:
                     continue
 
                 for iz in range(-z_steps // 2, z_steps // 2 + 1):
                     z = iz * self.resolution
-                    if abs(z) > z_limit:
+                    if abs(z) > z_limit + self.resolution * 0.5:
                         continue
 
                     marker.points.append(self.make_point(x, y, z))

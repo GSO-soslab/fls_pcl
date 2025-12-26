@@ -43,7 +43,7 @@ install(PROGRAMS
   fls_pcl/fls_pcl.py
   fls_pcl/depth_planner.py
   fls_pcl/plot_fls_beam.py
-  fls_pcl/sonar_visualization.py
+  fls_pcl/fls_voxels.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
