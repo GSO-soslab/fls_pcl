@@ -142,7 +142,7 @@ def generate_launch_description():
     ld.add_action(fls_pcl)
     # ld.add_action(path)
     ld.add_action(rviz)
-    ld.add_action(fls_intensity_plot_node)
+    # ld.add_action(fls_intensity_plot_node)
     ld.add_action(sonar_fov)
     ld.add_action(bag_play)
 
