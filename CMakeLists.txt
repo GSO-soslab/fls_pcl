@@ -6,30 +6,33 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(oculus_interfaces REQUIRED)
-# find_package(pcl_ros REQUIRED)
-# find_package(Open3D REQUIRED)
+find_package(ament_cmake REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(tf2_geometry_msgs REQUIRED)
+find_package(Eigen3 REQUIRED)  # for Eigen::Matrix4f, Eigen::Vector3f, etc.
 
-# include_directories(
-#   include
-#   ${Open3D_INCLUDE_DIRS}
-# )
+# Create executable
+add_executable(voxel_log_odds_visualizer src/voxel_log_odds_visualizer.cpp)
 
-# add_executable(loop_node
-#   src/loop.cpp)
+# Link libraries / dependencies
+ament_target_dependencies(voxel_log_odds_visualizer
+  rclcpp
+  sensor_msgs
+  visualization_msgs
+  tf2
+  tf2_ros
+  tf2_geometry_msgs
+  Eigen3
+)
+target_include_directories(voxel_log_odds_visualizer   PUBLIC ${EIGEN3_INCLUDE_DIR})
 
-# ament_target_dependencies(loop_node
-#   rclcpp
-#   sensor_msgs
-#   geometry_msgs
-#   pcl_conversions
-#   pcl_ros
-# )
-
-# target_link_libraries(loop_node ${Open3D_LIBRARIES})
-
-# install(TARGETS loop_node
-#   DESTINATION lib/${PROJECT_NAME})
-
+# Install
+install(TARGETS
+  voxel_log_odds_visualizer
+  DESTINATION lib/${PROJECT_NAME}
+)
 install(DIRECTORY include/
   DESTINATION include/)
 
@@ -44,6 +47,7 @@ install(PROGRAMS
   fls_pcl/depth_planner.py
   fls_pcl/plot_fls_beam.py
   fls_pcl/fls_voxels.py
+  fls_pcl/voxel_log_odds_visualizer.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

@@ -1,8 +1,9 @@
 /alpha_rise/fls_pcl_node:
   ros__parameters:
+    sim: False
     max_depth: -1.0 #World Frame (ENU)
     min_depth: -20.0 #World Frame (ENU)
-    threshold_intensity: 125 #0-255 pixel values
+    threshold_intensity: 70 #0-255 pixel values
     threshold_min_range: 5.0 #m
     vertical_beamwidth: 12.0 # degrees
     frame_id: 'alpha_rise/fls_link'

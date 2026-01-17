@@ -41,7 +41,10 @@ def generate_launch_description():
                 'launch',
                 'fls_pcl.launch.py'
             )
-        )
+        ),
+        launch_arguments={
+            'use_sim_time': 'true'
+        }.items()  
     )
 
     fls_intensity_plot_node = Node(
@@ -59,8 +62,32 @@ def generate_launch_description():
         name='sonar_visualization',
         namespace="alpha_rise",
         output='screen',
+        parameters=[{
+            'use_sim_time': True
+        }]
     )
 
+    msis_fov = Node(
+        package='pcl_proc',
+        executable='msis_voxels',
+        name='msis_viz',
+        namespace='alpha_rise',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True
+        }],
+    )
+
+    msis_fan = Node(
+        package='pcl_proc',
+        executable='msis_prob_clouds.py',
+        name='msis_clouds',
+        namespace='alpha_rise',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True
+        }],
+    )
     path = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(get_package_share_directory('alpha_rise_bringup'), 'launch','bringup_path.launch.py')]),
         launch_arguments = {'arg_robot_name': 'alpha_rise'}.items()  
@@ -73,7 +100,8 @@ def generate_launch_description():
             'launch/include/description.launch.py')]),
         launch_arguments={
             'robot_name': 'alpha_rise',
-            'description_delay': '0.0'
+            'description_delay': '0.0',
+            'use_sim_time': 'true'
         }.items()  
     )
 
@@ -96,8 +124,9 @@ def generate_launch_description():
             executable='rviz2',
             name='rviz2',
             arguments=['-d', [rviz_config_dir]],
+            parameters=[{'use_sim_time': True}],
             additional_env={
-            "LD_PRELOAD": "/usr/lib/x86_64-linux-gnu/liboctomap.so"
+            "LD_PRELOAD": "/usr/lib/x86_64-linux-gnu/liboctomap.so",
     },
         )
     
@@ -117,12 +146,21 @@ def generate_launch_description():
     ## MSIS bags
     # bag_file_path = '/home/tony/auv_ws/bags/msis/rosbag2_2025_11_24-15_44_37/rosbag2_2025_11_24-15_44_38/'
 
+                            # rosbag2_2025_12_05-15_29_38: gain = 2
+                            # rosbag2_2025_12_05-15_57_34: gain = 2
+                            # rosbag2_2025_12_05-16_09_45: gain = 2
+                            # rosbag2_2025_12_05-16_26_08: gain = 2
+                            # rosbag2_2025_12_05-16_43_41: gain = 1
+                            # rosbag2_2025_12_05-16_54_58: gain = 1
+                            # rosbag2_2025_12_05-17_09_41: gain = 2
+                            # rosbag2_2025_12_05-17_22_29: gain = 2
+                            # rosbag2_2025_12_05-17_35_12: gain = 2
     #Whale Rock 12/5
     # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_29_36/rosbag2_2025_12_05-15_29_38'
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_57_34/rosbag2_2025_12_05-15_57_35'
+    bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_57_34/rosbag2_2025_12_05-15_57_35'
     # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_09_45/rosbag2_2025_12_05-16_09_47'
     # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_26_08/rosbag2_2025_12_05-16_26_09'
-    bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_43_41/rosbag2_2025_12_05-16_43_42'
+    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_43_41/rosbag2_2025_12_05-16_43_42'
     # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_54_58/rosbag2_2025_12_05-16_55_00'
     # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_09_41/rosbag2_2025_12_05-17_09_42'
     # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_22_29/rosbag2_2025_12_05-17_22_30'
@@ -133,18 +171,22 @@ def generate_launch_description():
         cmd=[
             'ros2', 'bag', 'play', bag_file_path,
             # '--start-offset', '70.0',
-            '--rate', '4.0',
+            '--rate', '4.0', ##FOR SOME REASON TF WORKS BEST WITH 4.0
             '--clock'
         ],
         output='screen'
     )
 
     ld.add_action(fls_pcl)
-    # ld.add_action(path)
-    ld.add_action(rviz)
-    # ld.add_action(fls_intensity_plot_node)
     ld.add_action(sonar_fov)
+    # ld.add_action(fls_intensity_plot_node)
     ld.add_action(bag_play)
+
+    ld.add_action(rviz)
+    # ld.add_action(msis_fov)
+    # ld.add_action(msis_fan)
+    # ld.add_action(path)
+
 
     ld.add_action(description)
     # ld.add_action(octomap)
