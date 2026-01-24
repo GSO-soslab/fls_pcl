@@ -506,26 +506,29 @@ class FLS_PCL(Node):
             sensor_y    = sensor_y[self.sensor_indices]    # (N,)
 
             # --- intensity -> probability mapping ---
-            min_intensity = self.intensity_threshold
-            max_intensity = 255.0
-            min_prob = 0.5
-            max_prob = 0.9
+            lower = 22#self.lower_intensity_threshold
+            upper = 50#self.upper_intensity_threshold
 
-            # Create array of all 0.1 size of intensities.
+            min_prob = 0.2
+            max_prob = 0.8
+
+            # Start with all values at min_prob
             probabilities = np.full_like(intensities, 0.1, dtype=float)
 
-            # Mask that determines if intensity > threshold
-            mask = intensities > self.intensity_threshold
-            
-            # Convert all entries which return true to a scaled probability from min_prob to max_prob. 
-            # If intensity > threshold, map it to (0.5,0.9), else 0.1
-            probabilities[mask] = min_prob + (
-                (intensities[mask] - min_intensity) /
-                (max_intensity - min_intensity)
+            # Mask for linear interpolation range
+            mid_mask = (intensities > lower) & (intensities < upper)
+
+            # Linear interpolation between 0.1 and 0.9
+            probabilities[mid_mask] = min_prob + (
+                (intensities[mid_mask] - lower) /
+                (upper - lower)
             ) * (max_prob - min_prob)
 
-            probabilities = np.clip(probabilities, min_prob, max_prob)
-            probabilities = np.round(probabilities * 10)/10
+            # Anything above upper threshold → max_prob
+            probabilities[intensities >= upper] = 0.9
+
+            # Optional: round to nearest 0.1
+            probabilities = np.round(probabilities * 10) / 10
             intensities = probabilities
 
         elif mode == 'max_intensity':

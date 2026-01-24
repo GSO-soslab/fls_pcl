@@ -28,26 +28,43 @@ struct KeyHash {
                (std::hash<int>()(k.z) << 1);
     }
 };
-
+    
 class VoxelLogOddsVisualizer : public rclcpp::Node {
 public:
     VoxelLogOddsVisualizer() : Node("voxel_logodds_visualizer") {
-        voxel_res_ = this->declare_parameter<double>("voxel_resolution", 1.0);
-        grid_size_ = this->declare_parameter<double>("grid_size", 200.0);
-        logodds_min_ = this->declare_parameter<double>("logodds_min", -20.0);
-        logodds_max_ = this->declare_parameter<double>("logodds_max", 20.0);
-        frame_id_ = this->declare_parameter<std::string>("frame_id", "alpha_rise/odom");
-        prob_threshold_ = 0.3;
+        this->declare_parameter<double>("voxel_resolution", 1.0);
+        this->get_parameter("voxel_resolution", voxel_res_);
+
+        this->declare_parameter<double>("grid_size", 100.0);
+        this->get_parameter("grid_size", grid_size_);
+
+        this->declare_parameter<double>("logodds_min", -10.0);
+        this->get_parameter("logodds_min", logodds_min_);
+
+        this->declare_parameter<double>("logodds_max", 10.0);
+        this->get_parameter("logodds_max", logodds_max_);
+
+        this->declare_parameter<std::string>("frame_id", "map");
+        this->get_parameter("frame_id", frame_id_);
+
+        this->declare_parameter<double>("probability_threshold", 0.1);
+        this->get_parameter("probability_threshold", prob_threshold_);
+
+        this->declare_parameter<std::string>("sub_pointcloud_topic", "/pointcloud");
+        this->get_parameter("sub_pointcloud_topic", sub_pointcloud_topic_);
+
+        this->declare_parameter<std::string>("pub_marker_topic", "/marker");
+        this->get_parameter("pub_marker_topic", pub_marker_topic_);
 
         n_voxels_ = static_cast<int>(std::ceil(grid_size_ / voxel_res_));
 
         // ROS subscriptions and publishers
         pc_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            "/alpha_rise/fls/pointcloud/post", 10,
+            sub_pointcloud_topic_, 10,
             std::bind(&VoxelLogOddsVisualizer::pcCallback, this, std::placeholders::_1)
         );
         marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-            "/alpha_rise/voxel_map", 10
+           pub_marker_topic_, 10
         );
 
         // TF listener
@@ -61,6 +78,8 @@ public:
 private:
     double voxel_res_, grid_size_, logodds_min_, logodds_max_;
     std::string frame_id_;
+    std::string sub_pointcloud_topic_;
+    std::string pub_marker_topic_;
     double prob_threshold_;
     int n_voxels_;
 
@@ -73,8 +92,17 @@ private:
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
+    inline double to_logodds(double p) const {
+        // logodds = ln(p/1-p) = log_e(p/1-p)
+        return std::log(p / (1.0 - p));
+    }
+
+    inline double to_prob(double logodds) const {
+        return 1.0 / (1.0 + std::exp(-logodds));
+    }
+
     void pcCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
-        // Lookup transform
+        // Convert to frame_id_
         geometry_msgs::msg::TransformStamped trans;
         try {
             trans = tf_buffer_->lookupTransform(
@@ -90,7 +118,8 @@ private:
         sensor_msgs::PointCloud2ConstIterator<float> iter_y(*msg, "y");
         sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
         sensor_msgs::PointCloud2ConstIterator<float> iter_i(*msg, "intensity");
-
+        
+        // points 4x1 float vector
         std::vector<Eigen::Vector4f> points;
         std::vector<float> probs;
         for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++iter_i) {
@@ -111,7 +140,8 @@ private:
 
         for (size_t i = 0; i < points.size(); i++) {
             Eigen::Vector4f p_odom = T * points[i];
-
+            
+            //Voxel centroid closest to each point in map frame
             int ix = static_cast<int>(std::floor((p_odom.x() + half_grid) / voxel_res_));
             int iy = static_cast<int>(std::floor((p_odom.y() + half_grid) / voxel_res_));
             int iz = static_cast<int>(std::floor((p_odom.z() + half_grid) / voxel_res_));
@@ -120,11 +150,15 @@ private:
                 continue;
 
             VoxelKey key{ix, iy, iz};
-            float logodds = std::log(probs[i] / (1.0 - probs[i]));
 
+            double logodds = to_logodds(probs[i]);
+            
+            // logodds of unknown is 0. ln(0.5/0.5) = 0
             if (logodds_grid_.find(key) != logodds_grid_.end()) {
+                // If update already exists, bayesian add
                 logodds_grid_[key] += logodds;
             } else {
+                // Else, use as is.
                 logodds_grid_[key] = logodds;
             }
 
@@ -141,7 +175,8 @@ private:
         for (auto &kv : logodds_grid_) {
             VoxelKey key = kv.first;
             double logodds = kv.second;
-            double prob = 1.0 - 1.0 / (1.0 + std::exp(logodds));
+
+            double prob = to_prob(logodds);
 
             // Skip voxels below threshold
             if (prob < prob_threshold_) continue;
@@ -164,13 +199,10 @@ private:
 
             // Update color and alpha
             visualization_msgs::msg::Marker &marker = markers_[key];
-            marker.color.r = 1.0 - prob;
-            marker.color.g = prob;
-            marker.color.b = 0.0;
-
-            // Alpha scaled between 0.1 and 0.9
-            marker.color.a = 0.1 + 0.8 * prob;
-
+            marker.color.r = prob;
+            marker.color.g = 0.0f;
+            marker.color.b = 1.0f - prob;
+            marker.color.a = 0.8f;  
             marker_array.markers.push_back(marker);
         }
 

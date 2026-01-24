@@ -47,7 +47,7 @@ install(PROGRAMS
   fls_pcl/depth_planner.py
   fls_pcl/plot_fls_beam.py
   fls_pcl/fls_voxels.py
-  fls_pcl/voxel_log_odds_visualizer.py
+  fls_pcl/raw_image_threshold.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()
