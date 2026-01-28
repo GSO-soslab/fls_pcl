@@ -1,10 +1,10 @@
 /alpha_rise/voxel_log_odds_visualizer:
   ros__parameters:
-      # Volume of individual voxel. (voxel_resolution)^3
+      # Volume of individual voxel
       voxel_resolution: 1.0
       
-      # Volume of the voxel map. (grid_size)^3
-      grid_size: 200.0
+      # Volume of the voxel map. (m)
+      grid_size: 400.0
 
       # Min logodds value to clip at.
       logodds_min: -20.0
@@ -16,10 +16,16 @@
       frame_id: "alpha_rise/odom"
       
       # Only the voxels above this probablity is visualized
-      probability_threshold: 0.8
+      probability_threshold: 0.5
 
       # Pointcloud topic to subscribe
       sub_pointcloud_topic:  "/alpha_rise/fls/pointcloud/post"
+
+      pub_pointcloud_topic: "/occupancy_grid"
       
       # Marker topic to publish
       pub_marker_topic: "/alpha_rise/voxel_map"
+
+      output_pcd_file: "fls_voxel_prob_0_5_res_1.pcd"
+
+      save_pcd: true

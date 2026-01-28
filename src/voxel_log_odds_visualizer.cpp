@@ -10,6 +10,8 @@
 #include <unordered_map>
 #include <tuple>
 #include <cmath>
+#include <fstream>
+#include <iomanip>
 #include <Eigen/Dense>
 
 using namespace std::chrono_literals;
@@ -38,10 +40,10 @@ public:
         this->declare_parameter<double>("grid_size", 100.0);
         this->get_parameter("grid_size", grid_size_);
 
-        this->declare_parameter<double>("logodds_min", -10.0);
+        this->declare_parameter<double>("logodds_min", -5.0);
         this->get_parameter("logodds_min", logodds_min_);
 
-        this->declare_parameter<double>("logodds_max", 10.0);
+        this->declare_parameter<double>("logodds_max", 5.0);
         this->get_parameter("logodds_max", logodds_max_);
 
         this->declare_parameter<std::string>("frame_id", "map");
@@ -53,18 +55,28 @@ public:
         this->declare_parameter<std::string>("sub_pointcloud_topic", "/pointcloud");
         this->get_parameter("sub_pointcloud_topic", sub_pointcloud_topic_);
 
-        this->declare_parameter<std::string>("pub_marker_topic", "/marker");
-        this->get_parameter("pub_marker_topic", pub_marker_topic_);
+        // Changed parameter name to reflect PointCloud2 output
+        this->declare_parameter<std::string>("pub_pointcloud_topic", "/occupancy_grid");
+        this->get_parameter("pub_pointcloud_topic", pub_pointcloud_topic_);
+
+        this->declare_parameter<std::string>("output_pcd_file", "occupancy_grid.pcd");
+        this->get_parameter("output_pcd_file", output_pcd_file_);
+
+        this->declare_parameter<bool>("save_pcd", false);
+        this->get_parameter("save_pcd", save_pcd_);
 
         n_voxels_ = static_cast<int>(std::ceil(grid_size_ / voxel_res_));
+        half_grid_ = grid_size_ / 2.0;
 
         // ROS subscriptions and publishers
         pc_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
             sub_pointcloud_topic_, 10,
             std::bind(&VoxelLogOddsVisualizer::pcCallback, this, std::placeholders::_1)
         );
-        marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
-           pub_marker_topic_, 10
+        
+        // Changed to PointCloud2 publisher instead of MarkerArray
+        pc_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+           pub_pointcloud_topic_, 10
         );
 
         // TF listener
@@ -74,31 +86,101 @@ public:
         RCLCPP_INFO(this->get_logger(), "VoxelLogOddsVisualizer initialized. Grid size: %.2fm, resolution: %.2fm",
                     grid_size_, voxel_res_);
     }
+        
+    ~VoxelLogOddsVisualizer() { 
+        if (save_pcd_) {
+            RCLCPP_INFO(this->get_logger(), "Shutting down, saving PCD file...");
+            savePCD(output_pcd_file_);
+        }
+    }
 
 private:
+    std::string output_pcd_file_;
     double voxel_res_, grid_size_, logodds_min_, logodds_max_;
+    double half_grid_;
     std::string frame_id_;
     std::string sub_pointcloud_topic_;
-    std::string pub_marker_topic_;
+    std::string pub_pointcloud_topic_;
     double prob_threshold_;
     int n_voxels_;
+    bool save_pcd_;
 
     std::unordered_map<VoxelKey, double, KeyHash> logodds_grid_;
-    std::unordered_map<VoxelKey, visualization_msgs::msg::Marker, KeyHash> markers_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_;
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
 
     inline double to_logodds(double p) const {
-        // logodds = ln(p/1-p) = log_e(p/1-p)
         return std::log(p / (1.0 - p));
     }
 
     inline double to_prob(double logodds) const {
         return 1.0 / (1.0 + std::exp(-logodds));
+    }
+ 
+    void savePCD(const std::string& filename) {
+        std::ofstream pcd_file(filename);
+        if (!pcd_file.is_open()) {
+            RCLCPP_ERROR(this->get_logger(), "Failed to open PCD file: %s", filename.c_str());
+            return;
+        }
+
+        // Count valid voxels (above threshold)
+        size_t num_voxels = 0;
+        for (const auto& kv : logodds_grid_) {
+            double prob = to_prob(kv.second);
+            if (prob >= prob_threshold_) {
+                num_voxels++;
+            }
+        }
+
+        // Write PCD header
+        pcd_file << "# .PCD v.7 - Point Cloud Data file format\n";
+        pcd_file << "VERSION .7\n";
+        pcd_file << "FIELDS x y z rgb occupancy\n";
+        pcd_file << "SIZE 4 4 4 4 4\n";
+        pcd_file << "TYPE F F F U F\n";
+        pcd_file << "COUNT 1 1 1 1 1\n";
+        pcd_file << "WIDTH " << num_voxels << "\n";
+        pcd_file << "HEIGHT 1\n";
+        pcd_file << "VIEWPOINT 0 0 0 1 0 0 0\n";
+        pcd_file << "POINTS " << num_voxels << "\n";
+        pcd_file << "DATA ascii\n";
+
+        // Write voxel data
+        for (const auto& kv : logodds_grid_) {
+            const VoxelKey& key = kv.first;
+            double logodds = kv.second;
+            double prob = to_prob(logodds);
+
+            if (prob < prob_threshold_) continue;
+
+            // Calculate voxel center in world coordinates
+            float x = key.x * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+            float y = key.y * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+            float z = key.z * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+
+            // Calculate color (red = occupied, blue = free)
+            uint8_t red = static_cast<uint8_t>(prob * 255);
+            uint8_t green = 0;
+            uint8_t blue = static_cast<uint8_t>((1.0 - prob) * 255);
+
+            // Pack RGB into single 32-bit integer
+            uint32_t rgb = (static_cast<uint32_t>(red) << 16) |
+                          (static_cast<uint32_t>(green) << 8) |
+                          static_cast<uint32_t>(blue);
+
+            pcd_file << std::fixed << std::setprecision(6)
+                    << x << " " << y << " " << z << " "
+                    << rgb << " "
+                    << prob << "\n";
+        }
+
+        pcd_file.close();
+        RCLCPP_INFO(this->get_logger(), "Saved %zu voxels to %s", num_voxels, filename.c_str());
     }
 
     void pcCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
@@ -119,100 +201,131 @@ private:
         sensor_msgs::PointCloud2ConstIterator<float> iter_z(*msg, "z");
         sensor_msgs::PointCloud2ConstIterator<float> iter_i(*msg, "intensity");
         
-        // points 4x1 float vector
         std::vector<Eigen::Vector4f> points;
-        std::vector<float> probs;
+        std::vector<float> sensor_model_prob;
         for (; iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++iter_i) {
             if (std::isfinite(*iter_x) && std::isfinite(*iter_y) && std::isfinite(*iter_z)) {
                 points.emplace_back(*iter_x, *iter_y, *iter_z, 1.0f);
-                probs.push_back(*iter_i);
+                sensor_model_prob.push_back(*iter_i);
             }
         }
 
         if (points.empty()) return;
 
-        // Transform points to odom frame using TF
+        // Transform points to map frame using TF
         Eigen::Matrix4f T = transformToMatrix(trans);
 
-        std::vector<VoxelKey> voxel_keys;
-        std::vector<float> logodds_updates;
-        double half_grid = grid_size_ / 2.0;
-
         for (size_t i = 0; i < points.size(); i++) {
-            Eigen::Vector4f p_odom = T * points[i];
+            Eigen::Vector4f p_map = T * points[i];
             
-            //Voxel centroid closest to each point in map frame
-            int ix = static_cast<int>(std::floor((p_odom.x() + half_grid) / voxel_res_));
-            int iy = static_cast<int>(std::floor((p_odom.y() + half_grid) / voxel_res_));
-            int iz = static_cast<int>(std::floor((p_odom.z() + half_grid) / voxel_res_));
+            // Voxel indices
+            int ix = static_cast<int>(std::floor((p_map.x() + half_grid_) / voxel_res_));
+            int iy = static_cast<int>(std::floor((p_map.y() + half_grid_) / voxel_res_));
+            int iz = static_cast<int>(std::floor((p_map.z() + half_grid_) / voxel_res_));
 
             if (ix < 0 || iy < 0 || iz < 0 || ix >= n_voxels_ || iy >= n_voxels_ || iz >= n_voxels_)
                 continue;
 
             VoxelKey key{ix, iy, iz};
-
-            double logodds = to_logodds(probs[i]);
             
-            // logodds of unknown is 0. ln(0.5/0.5) = 0
+            // Bayesian log-odds update
+            double logodds_measurement = to_logodds(sensor_model_prob[i]);
+            double logodds_prior = to_logodds(0.5);
+            double evidence = logodds_measurement - logodds_prior;
+            
             if (logodds_grid_.find(key) != logodds_grid_.end()) {
-                // If update already exists, bayesian add
-                logodds_grid_[key] += logodds;
+                logodds_grid_[key] += evidence;
             } else {
-                // Else, use as is.
-                logodds_grid_[key] = logodds;
+                logodds_grid_[key] = evidence;
             }
 
             // Clip
             logodds_grid_[key] = std::min(std::max(logodds_grid_[key], logodds_min_), logodds_max_);
         }
 
-        updateMarkers();
+        publishPointCloud();
     }
-    void updateMarkers() {
-        visualization_msgs::msg::MarkerArray marker_array;
-        double half_grid = grid_size_ / 2.0;
 
-        for (auto &kv : logodds_grid_) {
-            VoxelKey key = kv.first;
+    void publishPointCloud() {
+        // Count valid voxels
+        size_t num_voxels = 0;
+        for (const auto& kv : logodds_grid_) {
+            double prob = to_prob(kv.second);
+            if (prob >= prob_threshold_) {
+                num_voxels++;
+            }
+        }
+
+        if (num_voxels == 0) return;
+
+        // Create PointCloud2 message
+        sensor_msgs::msg::PointCloud2 cloud_msg;
+        cloud_msg.header.stamp = this->get_clock()->now();
+        cloud_msg.header.frame_id = frame_id_;
+        cloud_msg.height = 1;
+        cloud_msg.width = num_voxels;
+        cloud_msg.is_dense = true;
+        cloud_msg.is_bigendian = false;
+
+        // Define fields: x, y, z, rgb, occupancy
+        sensor_msgs::PointCloud2Modifier modifier(cloud_msg);
+        modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
+        
+        // Add custom occupancy field
+        sensor_msgs::msg::PointField occupancy_field;
+        occupancy_field.name = "occupancy";
+        occupancy_field.offset = 16;  // After x, y, z (12 bytes) and rgb (4 bytes)
+        occupancy_field.datatype = sensor_msgs::msg::PointField::FLOAT32;
+        occupancy_field.count = 1;
+        cloud_msg.fields.push_back(occupancy_field);
+        
+        cloud_msg.point_step = 20;  // 12 (xyz) + 4 (rgb) + 4 (occupancy)
+        cloud_msg.row_step = cloud_msg.point_step * num_voxels;
+        cloud_msg.data.resize(cloud_msg.row_step);
+
+        // Create iterators
+        sensor_msgs::PointCloud2Iterator<float> iter_x(cloud_msg, "x");
+        sensor_msgs::PointCloud2Iterator<float> iter_y(cloud_msg, "y");
+        sensor_msgs::PointCloud2Iterator<float> iter_z(cloud_msg, "z");
+        sensor_msgs::PointCloud2Iterator<uint8_t> iter_rgb(cloud_msg, "rgb");
+        sensor_msgs::PointCloud2Iterator<float> iter_occ(cloud_msg, "occupancy");
+
+        // Fill point cloud data
+        for (const auto& kv : logodds_grid_) {
+            const VoxelKey& key = kv.first;
             double logodds = kv.second;
-
             double prob = to_prob(logodds);
 
-            // Skip voxels below threshold
             if (prob < prob_threshold_) continue;
 
-            // Create marker if not exists
-            if (markers_.find(key) == markers_.end()) {
-                visualization_msgs::msg::Marker marker;
-                marker.header.frame_id = frame_id_;
-                marker.ns = "voxels";
-                marker.id = markers_.size();
-                marker.type = visualization_msgs::msg::Marker::CUBE;
-                marker.action = visualization_msgs::msg::Marker::ADD;
-                marker.pose.position.x = key.x * voxel_res_ - half_grid + voxel_res_/2;
-                marker.pose.position.y = key.y * voxel_res_ - half_grid + voxel_res_/2;
-                marker.pose.position.z = key.z * voxel_res_ - half_grid + voxel_res_/2;
-                marker.pose.orientation.w = 1.0;
-                marker.scale.x = marker.scale.y = marker.scale.z = voxel_res_;
-                markers_[key] = marker;
-            }
+            // Calculate voxel center in world coordinates
+            *iter_x = key.x * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+            *iter_y = key.y * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+            *iter_z = key.z * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
 
-            // Update color and alpha
-            visualization_msgs::msg::Marker &marker = markers_[key];
-            marker.color.r = prob;
-            marker.color.g = 0.0f;
-            marker.color.b = 1.0f - prob;
-            marker.color.a = 0.8f;  
-            marker_array.markers.push_back(marker);
+            // Calculate color (red = occupied, blue = free)
+            uint8_t red = static_cast<uint8_t>(prob * 255);
+            uint8_t green = 0;
+            uint8_t blue = static_cast<uint8_t>((1.0 - prob) * 255);
+
+            // Pack RGB
+            iter_rgb[0] = red;
+            iter_rgb[1] = green;
+            iter_rgb[2] = blue;
+            iter_rgb[3] = 255;  // Alpha
+
+            // Set occupancy probability
+            *iter_occ = static_cast<float>(prob);
+
+            ++iter_x;
+            ++iter_y;
+            ++iter_z;
+            ++iter_rgb;
+            ++iter_occ;
         }
 
-        auto now = this->get_clock()->now();
-        for (auto &m : marker_array.markers) {
-            m.header.stamp = now;
-        }
-        marker_pub_->publish(marker_array);
+        pc_pub_->publish(cloud_msg);
     }
-
 
     Eigen::Matrix4f transformToMatrix(const geometry_msgs::msg::TransformStamped &trans) {
         Eigen::Quaternionf q(trans.transform.rotation.w,
