@@ -59,7 +59,7 @@ class FLS_PCL(Node):
 
         self.sim = self.get_parameter('sim').value
         self.max_depth = self.get_parameter('max_depth').value
-        self.min_depth = self.get_parameter('min_depth').value
+        # self.min_depth = self.get_parameter('min_depth').value
         self.intensity_threshold = self.get_parameter('threshold_intensity').value
         self.threshold_min_range = self.get_parameter('threshold_min_range').value
         self.beam_skip_count = self.get_parameter('beam_skip_count').value
@@ -88,6 +88,7 @@ class FLS_PCL(Node):
 
         # Subscribers
         self.sub_image = self.create_subscription(Image, self.get_parameter('image_sub_topic').value, self.image_CB,10)
+        self.sub_pcl = self.create_subscription(PointCloud2, pub_topic, self.pointcloud_CB, 10)
         
         if not self.sim:
             self.sub_ping = self.create_subscription(Ping, self.get_parameter('ping_sub_topic').value, self.ping_CB, 10)
@@ -343,7 +344,7 @@ class FLS_PCL(Node):
                 z = points[:, 2]
 
                 # Mask for points OUTSIDE depth range
-                invalid_mask = (z > self.max_depth) | (z < self.min_depth)
+                invalid_mask = (z > self.max_depth) #| (z < self.min_depth)
 
                 # Set xyz to NaN
                 points[invalid_mask, 0:3] = np.nan
@@ -648,53 +649,61 @@ class FLS_PCL(Node):
         Publish the resultant probabilty cloud.
         Stores the msg as a .pcl file
         '''
-        marker = Marker()
-        marker.header = msg.header
-        marker.ns = "cloud"
-        marker.id = 0
-        marker.type = Marker.CUBE_LIST      # 🔹 changed
-        marker.action = Marker.ADD
+        # marker = Marker()
+        # marker.header = msg.header
+        # marker.ns = "cloud"
+        # marker.id = 0
+        # marker.type = Marker.CUBE_LIST      # 🔹 changed
+        # marker.action = Marker.ADD
 
-        # Cube size
-        marker.scale.x = self.marker_resolution
-        marker.scale.y = self.marker_resolution
-        marker.scale.z = self.marker_resolution
+        # # Cube size
+        # marker.scale.x = self.marker_resolution
+        # marker.scale.y = self.marker_resolution
+        # marker.scale.z = self.marker_resolution
 
-        for x, y, z, intensity in point_cloud2.read_points(
-                msg,
-                field_names=("x", "y", "z", "intensity"),
-                skip_nans=True):
+        # for x, y, z, intensity in point_cloud2.read_points(
+        #         msg,
+        #         field_names=("x", "y", "z", "intensity"),
+        #         skip_nans=True):
 
-            if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
-                continue
-            if not math.isfinite(intensity):
-                continue
-            x = (x + 0.5) * self.marker_resolution
-            y = (y + 0.5) * self.marker_resolution
-            z = (z + 0.5) * self.marker_resolution
+        #     if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
+        #         continue
+        #     if not math.isfinite(intensity):
+        #         continue
+        #     x = (x + 0.5) * self.marker_resolution
+        #     y = (y + 0.5) * self.marker_resolution
+        #     z = (z + 0.5) * self.marker_resolution
 
-            # Assign explicitly to Point
-            p = Point()
-            p.x = float(x)
-            p.y = float(y)
-            p.z = float(z)
-            marker.points.append(p)
+        #     # Assign explicitly to Point
+        #     p = Point()
+        #     p.x = float(x)
+        #     p.y = float(y)
+        #     p.z = float(z)
+        #     marker.points.append(p)
 
 
-            # Intensity → color (per cube)
-            i = max(0.0, min(1.0, intensity))
+        #     # Intensity → color (per cube)
+        #     i = max(0.0, min(1.0, intensity))
 
-            c = ColorRGBA()
-            c.r = float(i)
-            c.g = float(1.0 - abs(i - 0.5) * 2.0)
-            c.b = float(1.0 - i)
-            c.a = float(1.0)
+        #     c = ColorRGBA()
+        #     c.r = float(i)
+        #     c.g = float(1.0 - abs(i - 0.5) * 2.0)
+        #     c.b = float(1.0 - i)
+        #     c.a = float(1.0)
 
-            marker.colors.append(c)   # 🔹 required for CUBE_LIST
-        # print(len(marker.points), flush=True)
-        self.probability_marker_pub.publish(marker)
+        #     marker.colors.append(c)   # 🔹 required for CUBE_LIST
+        # # print(len(marker.points), flush=True)
+        # self.probability_marker_pub.publish(marker)
         
-        if self.save_as_pcd_bool:     
+        if self.save_as_pcd_bool:  
+            transform = self.tf_buffer.lookup_transform(
+                'alpha_rise/world',
+                self.frame_id,
+                rclpy.time.Time()
+                )
+
+            # Transform to world frame
+            msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(msg, transform)   
             pc_data = msg.data
             point_step = msg.point_step
             fields = msg.fields
@@ -723,10 +732,37 @@ class FLS_PCL(Node):
             # self.get_logger().info(f"Added {len(points)} points")
 
     def on_shutdown(self):
-        # Called automatically on Ctrl+C
-        # self.get_logger().info("Ctrl+C detected → saving PCD...")
-        o3d.io.write_point_cloud(self.pcd_filename, self.accumulated_cloud)
-        # self.get_logger().info(f"Saved PCD: {self.pcd_filename}")
+        self.get_logger().info(f"Shutting down → saving PCD: {self.pcd_filename}")
+        
+        if not self.accumulated_cloud.has_points():
+            print("⚠ Warning: Point cloud is empty")
+            return
+        
+        # Clean the point cloud before saving
+        points = np.asarray(self.accumulated_cloud.points)
+        
+        # Remove NaN and Inf values
+        valid_mask = ~(np.isnan(points).any(axis=1) | np.isinf(points).any(axis=1))
+        valid_points = points[valid_mask]
+        
+        if len(valid_points) == 0:
+            print("⚠ Warning: No valid points after filtering")
+            return
+        
+        # Create clean point cloud
+        clean_pcd = o3d.geometry.PointCloud()
+        clean_pcd.points = o3d.utility.Vector3dVector(valid_points)
+        
+        # Copy colors/normals if they exist
+        if self.accumulated_cloud.has_colors():
+            colors = np.asarray(self.accumulated_cloud.colors)[valid_mask]
+            clean_pcd.colors = o3d.utility.Vector3dVector(colors)
+        
+        try:
+            o3d.io.write_point_cloud(self.pcd_filename, clean_pcd)
+            print(f"✓ Saved {len(valid_points)} valid points to {self.pcd_filename}")
+        except Exception as e:
+            print(f"✗ Failed to save: {e}")
 
 def main():
     rclpy.init()

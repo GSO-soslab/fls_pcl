@@ -2,7 +2,7 @@
   ros__parameters:
     sim: False
     max_depth: -1.0 #World Frame (ENU)
-    min_depth: -20.0 #World Frame (ENU)
+    # min_depth: -15.0 #World Frame (ENU)
     threshold_intensity: 70 #0-255 pixel values
     threshold_min_range: 5.0 #m
     vertical_beamwidth: 12.0 # degrees
@@ -22,4 +22,4 @@
     beam_skip_count: 1
 
     save_as_pcd: False
-    pcd_filename: "output_full_distance.pcd"
+    pcd_filename: "fls_max_intensity.pcd"
