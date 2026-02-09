@@ -267,19 +267,18 @@ private:
         cloud_msg.is_dense = true;
         cloud_msg.is_bigendian = false;
 
-        // Define fields: x, y, z, rgb, occupancy
+        // // Define fields: x, y, z, intensity
         sensor_msgs::PointCloud2Modifier modifier(cloud_msg);
-        modifier.setPointCloud2FieldsByString(2, "xyz", "rgb");
+        modifier.setPointCloud2Fields(4,
+            "x", 1, sensor_msgs::msg::PointField::FLOAT32,
+            "y", 1, sensor_msgs::msg::PointField::FLOAT32,
+            "z", 1, sensor_msgs::msg::PointField::FLOAT32,
+            "intensity", 1, sensor_msgs::msg::PointField::FLOAT32
+        );
         
-        // Add custom occupancy field
-        sensor_msgs::msg::PointField occupancy_field;
-        occupancy_field.name = "occupancy";
-        occupancy_field.offset = 16;  // After x, y, z (12 bytes) and rgb (4 bytes)
-        occupancy_field.datatype = sensor_msgs::msg::PointField::FLOAT32;
-        occupancy_field.count = 1;
-        cloud_msg.fields.push_back(occupancy_field);
+        modifier.resize(num_voxels);
         
-        cloud_msg.point_step = 20;  // 12 (xyz) + 4 (rgb) + 4 (occupancy)
+        cloud_msg.point_step = 16;  // 12 (xyz) + 4 (intensity)
         cloud_msg.row_step = cloud_msg.point_step * num_voxels;
         cloud_msg.data.resize(cloud_msg.row_step);
 
@@ -287,8 +286,7 @@ private:
         sensor_msgs::PointCloud2Iterator<float> iter_x(cloud_msg, "x");
         sensor_msgs::PointCloud2Iterator<float> iter_y(cloud_msg, "y");
         sensor_msgs::PointCloud2Iterator<float> iter_z(cloud_msg, "z");
-        sensor_msgs::PointCloud2Iterator<uint8_t> iter_rgb(cloud_msg, "rgb");
-        sensor_msgs::PointCloud2Iterator<float> iter_occ(cloud_msg, "occupancy");
+        sensor_msgs::PointCloud2Iterator<float> iter_intensity(cloud_msg, "intensity");
 
         // Fill point cloud data
         for (const auto& kv : logodds_grid_) {
@@ -303,25 +301,13 @@ private:
             *iter_y = key.y * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
             *iter_z = key.z * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
 
-            // Calculate color (red = occupied, blue = free)
-            uint8_t red = static_cast<uint8_t>(prob * 255);
-            uint8_t green = 0;
-            uint8_t blue = static_cast<uint8_t>((1.0 - prob) * 255);
-
-            // Pack RGB
-            iter_rgb[0] = red;
-            iter_rgb[1] = green;
-            iter_rgb[2] = blue;
-            iter_rgb[3] = 255;  // Alpha
-
-            // Set occupancy probability
-            *iter_occ = static_cast<float>(prob);
+            // Set intensity as probability (0-1 range)
+            *iter_intensity = static_cast<float>(prob);
 
             ++iter_x;
             ++iter_y;
             ++iter_z;
-            ++iter_rgb;
-            ++iter_occ;
+            ++iter_intensity;
         }
 
         pc_pub_->publish(cloud_msg);
