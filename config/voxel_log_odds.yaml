@@ -16,16 +16,14 @@
       frame_id: "alpha_rise/odom"
       
       # Only the voxels above this probablity is visualized
-      probability_threshold: 0.5
+      probability_threshold: 0.9
 
       # Pointcloud topic to subscribe
       sub_pointcloud_topic:  "/alpha_rise/fls/pointcloud/post"
+      # sub_pointcloud_topic:  "/alpha_rise/msis/pointcloud/fan"
 
       pub_pointcloud_topic: "/occupancy_grid"
       
-      # Marker topic to publish
-      pub_marker_topic: "/alpha_rise/voxel_map"
+      output_pcd_file: "fls_voxel_prob_full_map.pcd"
 
-      output_pcd_file: "fls_voxel_prob_0_5_res_1.pcd"
-
-      save_pcd: true
+      save_pcd: false

@@ -2,7 +2,7 @@
   ros__parameters:
     sim: False
     max_depth: -1.0 #World Frame (ENU)
-    # min_depth: -15.0 #World Frame (ENU)
+    min_depth: -15.0 #World Frame (ENU)
     threshold_intensity: 70 #0-255 pixel values
     threshold_min_range: 5.0 #m
     vertical_beamwidth: 12.0 # degrees
@@ -12,6 +12,22 @@
     marker_sub_topic: '/alpha_rise/fls/geometry'
     pointcloud_pub_topic: '/alpha_rise/fls/pointcloud/post'
     filter_mode: 'probabilistic_intensity' # threshold_intensity/max_intensity/probabilistic_intensity
+
+    probabilistic_intensity:
+      intensity:
+        lower_bound_intensity: 22
+        upper_bound_intensity: 50
+        min_probability: 0.1
+        max_probability: 0.9
+
+      elevation:
+        center_beam_probability: 1.0
+        edge_beam_probability: 0.6
+
+      sonar_params:
+        frequency: 1.2e6          # Frequency: 1.2 MHz. e is exponent.
+        sound_speed: 1500         # m/s
+        aperture_size: 0.0065     # 0.0065 m
 
     ## Stonefish
     # frame_id: 'alpha_rise/fls_link_sf'

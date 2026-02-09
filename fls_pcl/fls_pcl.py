@@ -5,8 +5,6 @@ from rclpy.parameter import Parameter
 from sensor_msgs.msg import PointCloud2, PointField, Image
 from std_msgs.msg import Header
 import numpy as np
-import math
-import cv2
 import open3d as o3d
 from cv_bridge import CvBridge
 from tf2_ros import Buffer, TransformListener
@@ -19,9 +17,6 @@ from math import nan
 from oculus_interfaces.msg import Ping
 from visualization_msgs.msg import Marker
 from scipy.spatial import cKDTree
-from sensor_msgs_py import point_cloud2
-from geometry_msgs.msg import Point
-from std_msgs.msg import ColorRGBA
 
 class FLS_PCL(Node):
     """
@@ -33,63 +28,126 @@ class FLS_PCL(Node):
     def __init__(self):
         super().__init__('fls_pcl_node')
         
-        # TF2
+        # === TF2 ===
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Declare and read parameters
+        # === Declare and read parameters ===
         self.declare_parameter('sim',Parameter.Type.BOOL)
+        self.sim = self.get_parameter('sim').value
 
         self.declare_parameter('max_depth',Parameter.Type.DOUBLE)
+        self.max_depth = self.get_parameter('max_depth').value
+
         self.declare_parameter('min_depth',Parameter.Type.DOUBLE)
+        self.min_depth = self.get_parameter('min_depth').value
 
         self.declare_parameter('threshold_intensity',Parameter.Type.INTEGER)
+        self.intensity_threshold = self.get_parameter('threshold_intensity').value
+
         self.declare_parameter('threshold_min_range',Parameter.Type.DOUBLE)
+        self.threshold_min_range = self.get_parameter('threshold_min_range').value
 
         self.declare_parameter('beam_skip_count',Parameter.Type.INTEGER)
+        self.beam_skip_count = self.get_parameter('beam_skip_count').value
+
         self.declare_parameter('vertical_beamwidth', Parameter.Type.DOUBLE)
+        self.vertical_beamwidth = self.get_parameter('vertical_beamwidth').value
+
         self.declare_parameter('frame_id',Parameter.Type.STRING)
+        self.frame_id = self.get_parameter('frame_id').value
+
         self.declare_parameter('ping_sub_topic',Parameter.Type.STRING)
         self.declare_parameter('marker_sub_topic',Parameter.Type.STRING)
         self.declare_parameter('image_sub_topic',Parameter.Type.STRING)
+        
         self.declare_parameter('pointcloud_pub_topic', Parameter.Type.STRING)
-        self.declare_parameter('save_as_pcd', Parameter.Type.BOOL)
-        self.declare_parameter('pcd_filename', Parameter.Type.STRING)
-        self.declare_parameter('filter_mode', Parameter.Type.STRING)
-
-        self.sim = self.get_parameter('sim').value
-        self.max_depth = self.get_parameter('max_depth').value
-        # self.min_depth = self.get_parameter('min_depth').value
-        self.intensity_threshold = self.get_parameter('threshold_intensity').value
-        self.threshold_min_range = self.get_parameter('threshold_min_range').value
-        self.beam_skip_count = self.get_parameter('beam_skip_count').value
-        self.vertical_beamwidth = self.get_parameter('vertical_beamwidth').value
-
-        self.frame_id = self.get_parameter('frame_id').value
         pub_topic = self.get_parameter('pointcloud_pub_topic').value
+
+        self.declare_parameter('save_as_pcd', Parameter.Type.BOOL)
         self.save_as_pcd_bool = self.get_parameter('save_as_pcd').value
+
+        self.declare_parameter('pcd_filename', Parameter.Type.STRING)
         self.pcd_filename = self.get_parameter('pcd_filename').value
+
+        self.declare_parameter('filter_mode', Parameter.Type.STRING)
         self.filter_mode = self.get_parameter('filter_mode').value
 
-        # CV bridge
+        if self.filter_mode == "probabilistic_intensity":
+            self.declare_parameter('probabilistic_intensity.intensity.lower_bound_intensity', Parameter.Type.INTEGER)
+            self.lower_bound_intensity = self.get_parameter('probabilistic_intensity.intensity.lower_bound_intensity').value
+
+            self.declare_parameter('probabilistic_intensity.intensity.upper_bound_intensity', Parameter.Type.INTEGER)
+            self.upper_bound_intensity = self.get_parameter('probabilistic_intensity.intensity.upper_bound_intensity').value
+
+            self.declare_parameter('probabilistic_intensity.intensity.min_probability', Parameter.Type.DOUBLE)
+            self.min_prob = self.get_parameter('probabilistic_intensity.intensity.min_probability').value
+
+            self.declare_parameter('probabilistic_intensity.intensity.max_probability', Parameter.Type.DOUBLE)
+            self.max_prob = self.get_parameter('probabilistic_intensity.intensity.max_probability').value
+
+            self.declare_parameter('probabilistic_intensity.elevation.center_beam_probability', Parameter.Type.DOUBLE)
+            self.elevation_beam_center_probability = self.get_parameter('probabilistic_intensity.elevation.center_beam_probability').value
+
+            self.declare_parameter('probabilistic_intensity.elevation.edge_beam_probability', Parameter.Type.DOUBLE)
+            self.elevation_beam_edge_probability = self.get_parameter('probabilistic_intensity.elevation.edge_beam_probability').value
+
+            self.declare_parameter('probabilistic_intensity.sonar_params.frequency', Parameter.Type.DOUBLE)
+            self.frequency = self.get_parameter('probabilistic_intensity.sonar_params.frequency').value
+
+            self.declare_parameter('probabilistic_intensity.sonar_params.sound_speed', Parameter.Type.INTEGER)
+            self.sound_speed = self.get_parameter('probabilistic_intensity.sonar_params.sound_speed').value
+
+            self.declare_parameter('probabilistic_intensity.sonar_params.aperture_size', Parameter.Type.DOUBLE)
+            self.aperture_size = self.get_parameter('probabilistic_intensity.sonar_params.aperture_size').value
+
+            # === Sonar Physical Parameters ===
+            wavelength = self.sound_speed / self.frequency
+            k = 2 * np.pi / wavelength
+
+            # === Elevation angles ===
+            elevation_angles = np.arange(
+                -self.vertical_beamwidth / 2,
+                self.vertical_beamwidth / 2 + 1,
+                1,
+                dtype=np.float32
+            )
+
+            angles_rad = np.deg2rad(elevation_angles)
+
+            # === Precompute trig ===
+            self.cos_a = np.cos(angles_rad)[:, None]
+            self.sin_a = np.sin(angles_rad)[:, None]
+
+            # === Physical beam pattern (sinc) using SONAR beam directivity pattern ===
+            temp = (k * self.aperture_size / 2) * np.sin(angles_rad)
+            DI = np.ones_like(temp, dtype=np.float32)
+            non_zero_mask = np.abs(temp) > 1e-10
+            
+            # === DI = sinc(kh/2*sin(elevation_angle)) ===
+            DI[non_zero_mask] = np.sin(temp[non_zero_mask]) / temp[non_zero_mask]
+            self.beam_probs = np.clip(DI, self.elevation_beam_edge_probability, self.elevation_beam_center_probability)
+
+        # === CV bridge ===
         self.bridge = CvBridge()
 
-        # Persistent accumulated cloud
+        # === Persistent accumulated cloud ===
         self.accumulated_cloud = o3d.geometry.PointCloud()
 
-        # Triggers
+        # === Triggers ===
         self.receive_ping = False
         self.receive_marker = False
         self.bool_create_sonar_geometry = False
 
-        # Publishers
+        # === Publishers ===
         self.pub_pcl = self.create_publisher(PointCloud2, pub_topic, 10)
         self.pub_fls_median_image = self.create_publisher(Image, pub_topic+'/image/median', 10)
 
-        # Subscribers
+        # === Subscribers === 
         self.sub_image = self.create_subscription(Image, self.get_parameter('image_sub_topic').value, self.image_CB,10)
         self.sub_pcl = self.create_subscription(PointCloud2, pub_topic, self.pointcloud_CB, 10)
         
+        # === Sub to Ping topic else, get sim parameters ===
         if not self.sim:
             self.sub_ping = self.create_subscription(Ping, self.get_parameter('ping_sub_topic').value, self.ping_CB, 10)
         else:
@@ -98,9 +156,10 @@ class FLS_PCL(Node):
             bearings = np.loadtxt('bearings.txt')
             self.bearings = np.array([np.radians(bearing * 0.01) for bearing in bearings]).squeeze()
 
+        # === Sub to Marker topic for Voxels ===
         self.sub_marker = self.create_subscription(Marker, self.get_parameter('marker_sub_topic').value, self.marker_CB, 10)
 
-        # Populate PointCloud2 message
+        # === Initialize PointCloud2 message ===
         self.pointcloud_msg = PointCloud2()
         h = Header()
         h.frame_id = self.frame_id
@@ -116,30 +175,7 @@ class FLS_PCL(Node):
         self.pointcloud_msg.point_step = 4 * (len(self.fields))  # Each point occupies 16 bytes
         self.pointcloud_msg.is_dense = True  # All points are valid
 
-        # === Elevation angles ===
-        elevation_angles = np.arange(
-            -self.vertical_beamwidth / 2,
-            self.vertical_beamwidth / 2 + 1,
-            1,
-            dtype=np.float32
-        )  # (B,)
-
-        angles_rad = np.deg2rad(elevation_angles)
-
-        # === Gaussian beam probabilities ===
-        min_prob = 0.5
-        max_prob = 0.9
-        sigma = 1.0
-
-        self.beam_probs = min_prob + (max_prob - min_prob) * np.exp(
-            -0.5 * (elevation_angles / sigma) ** 2
-        ).astype(np.float32)  # (B,)
-
-        # === Precompute trig ===
-        self.cos_a = np.cos(angles_rad)[:, None]  # (B, 1)
-        self.sin_a = np.sin(angles_rad)[:, None]  # (B, 1)
-        
-        # Register shutdown handler
+        # === Register shutdown handler ===
         rclpy.get_default_context().on_shutdown(self.on_shutdown)
     
     def marker_CB(self, msg:Marker):
@@ -196,6 +232,7 @@ class FLS_PCL(Node):
 
             # Lee filter. Better for multiplicative noise.
             # current = self.lee_filter(current, kernel_size=5)
+
             # Zero out the middle 10 columns
             h, w = current.shape
             mid = w // 2
@@ -230,8 +267,10 @@ class FLS_PCL(Node):
 
             # Apply mask
             current[mask] = 0
+
             # Median Filtering, Higher ksize, stronger smoothening, higher comp
             # current = cv2.medianBlur(current, ksize=11)
+            
             self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
 
             # === Convert all valid pixels to sensor frame coordinates ===
@@ -255,10 +294,6 @@ class FLS_PCL(Node):
                 # === Stack rotated points ===
                 rotated_points = np.stack((x_r, y_r, z_r), axis=-1)
                 # shape: (B, N, 3)
-
-                # === Union probability ===
-                # P = 1 - (1 - P_point)(1 - P_beam)
-                # final_probs = 1.0 - (1.0 - raw_intensity[None, :]) * (1.0 - self.beam_probs[:, None])
 
                 # === Joint probability ===
                 # P = P_point * P_beam
@@ -393,34 +428,6 @@ class FLS_PCL(Node):
         distance, indices = tree.query(voxel_points, k=1)
 
         return indices, distance
-        
-
-    def create_valid_SONAR_points(self, min_range:float, max_range:float, n_bins:int):
-        """
-        Generate valid SONAR return points in 3D (x,y,z=0).
-
-        :param min_range: minimum range of the SONAR
-        :param max_range: maximum range of the SONAR
-        :param n_bins: number of range bins
-
-        :return: (n_bins * n_beams, 3) array of (x, y, 3) points. Ex. (517*512,3)
-        """
-        # Range bins
-        ranges = np.linspace(min_range, max_range, n_bins)
-
-        azimuth_angles = self.bearings
-
-        # Meshgrid (range × azimuth)
-        R, AZ = np.meshgrid(ranges, azimuth_angles, indexing="ij")
-
-        # Convert to Cartesian
-        X = R * np.cos(AZ)
-        Y = R * np.sin(AZ)
-        # Elevation is 0
-        Z = np.zeros_like(X)
-
-        points = np.stack((X, Y, Z), axis=-1).reshape(-1, 3)
-        return points
     
     def extract_points_in_sensor_frame(self, image:np.ndarray, mode='threshold_intensity'):
         """
@@ -506,27 +513,20 @@ class FLS_PCL(Node):
             sensor_x    = sensor_x[self.sensor_indices]    # (N,)
             sensor_y    = sensor_y[self.sensor_indices]    # (N,)
 
-            # --- intensity -> probability mapping ---
-            lower = 22#self.lower_intensity_threshold
-            upper = 50#self.upper_intensity_threshold
-
-            min_prob = 0.2
-            max_prob = 0.8
-
             # Start with all values at min_prob
             probabilities = np.full_like(intensities, 0.1, dtype=float)
 
             # Mask for linear interpolation range
-            mid_mask = (intensities > lower) & (intensities < upper)
+            mid_mask = (intensities > self.lower_bound_intensity) & (intensities < self.upper_bound_intensity)
 
             # Linear interpolation between 0.1 and 0.9
-            probabilities[mid_mask] = min_prob + (
-                (intensities[mid_mask] - lower) /
-                (upper - lower)
-            ) * (max_prob - min_prob)
+            probabilities[mid_mask] = self.min_prob + (
+                (intensities[mid_mask] - self.lower_bound_intensity) /
+                (self.upper_bound_intensity - self.lower_bound_intensity)
+            ) * (self.max_prob - self.min_prob)
 
             # Anything above upper threshold → max_prob
-            probabilities[intensities >= upper] = 0.9
+            probabilities[intensities >= self.upper_bound_intensity] = 0.9
 
             # Optional: round to nearest 0.1
             probabilities = np.round(probabilities * 10) / 10
@@ -649,52 +649,6 @@ class FLS_PCL(Node):
         Publish the resultant probabilty cloud.
         Stores the msg as a .pcl file
         '''
-        # marker = Marker()
-        # marker.header = msg.header
-        # marker.ns = "cloud"
-        # marker.id = 0
-        # marker.type = Marker.CUBE_LIST      # 🔹 changed
-        # marker.action = Marker.ADD
-
-        # # Cube size
-        # marker.scale.x = self.marker_resolution
-        # marker.scale.y = self.marker_resolution
-        # marker.scale.z = self.marker_resolution
-
-        # for x, y, z, intensity in point_cloud2.read_points(
-        #         msg,
-        #         field_names=("x", "y", "z", "intensity"),
-        #         skip_nans=True):
-
-        #     if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(z)):
-        #         continue
-        #     if not math.isfinite(intensity):
-        #         continue
-        #     x = (x + 0.5) * self.marker_resolution
-        #     y = (y + 0.5) * self.marker_resolution
-        #     z = (z + 0.5) * self.marker_resolution
-
-        #     # Assign explicitly to Point
-        #     p = Point()
-        #     p.x = float(x)
-        #     p.y = float(y)
-        #     p.z = float(z)
-        #     marker.points.append(p)
-
-
-        #     # Intensity → color (per cube)
-        #     i = max(0.0, min(1.0, intensity))
-
-        #     c = ColorRGBA()
-        #     c.r = float(i)
-        #     c.g = float(1.0 - abs(i - 0.5) * 2.0)
-        #     c.b = float(1.0 - i)
-        #     c.a = float(1.0)
-
-        #     marker.colors.append(c)   # 🔹 required for CUBE_LIST
-        # # print(len(marker.points), flush=True)
-        # self.probability_marker_pub.publish(marker)
-        
         if self.save_as_pcd_bool:  
             transform = self.tf_buffer.lookup_transform(
                 'alpha_rise/world',
@@ -728,8 +682,6 @@ class FLS_PCL(Node):
             # Add to accumulated cloud
             self.accumulated_cloud.points.extend(cloud.points)
             self.accumulated_cloud.colors.extend(cloud.colors)
-
-            # self.get_logger().info(f"Added {len(points)} points")
 
     def on_shutdown(self):
         self.get_logger().info(f"Shutting down → saving PCD: {self.pcd_filename}")

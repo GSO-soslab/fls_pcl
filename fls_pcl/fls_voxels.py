@@ -9,6 +9,7 @@ import rclpy
 from rclpy.node import Node
 from visualization_msgs.msg import Marker
 from geometry_msgs.msg import Point
+from rclpy.parameter import Parameter
 
 
 class FLS_Voxels(Node):
@@ -19,12 +20,12 @@ class FLS_Voxels(Node):
         super().__init__('fls_voxel_node')
 
         # ---- Parameters ----
-        self.declare_parameter('range_max', 40.0)
-        self.declare_parameter('horizontal_fov_deg', 70.0)
-        self.declare_parameter('vertical_fov_deg', 12.0)
-        self.declare_parameter('spacing_angle_deg', 1.0)
-        self.declare_parameter('resolution', 1.0)  # meters
-        self.declare_parameter('frame_id', 'alpha_rise/fls_link')
+        self.declare_parameter('range_max', Parameter.Type.DOUBLE)
+        self.declare_parameter('horizontal_fov_deg', Parameter.Type.DOUBLE)
+        self.declare_parameter('vertical_fov_deg', Parameter.Type.DOUBLE)
+        self.declare_parameter('spacing_angle_deg', Parameter.Type.DOUBLE)
+        self.declare_parameter('resolution', Parameter.Type.DOUBLE)  # meters
+        self.declare_parameter('frame_id', Parameter.Type.STRING)
 
         self.max_range = self.get_parameter('range_max').value
         self.h_fov = math.radians(self.get_parameter('horizontal_fov_deg').value ) 

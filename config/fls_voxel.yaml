@@ -1,0 +1,8 @@
+/alpha_rise/fls_voxel_node:
+  ros__parameters:
+    range_max: 40.0
+    horizontal_fov_deg: 70.0
+    vertical_fov_deg: 12.0
+    spacing_angle_deg: 1.0
+    resolution: 1.0
+    frame_id: 'alpha_rise/fls_link'
