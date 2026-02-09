@@ -226,52 +226,8 @@ class FLS_PCL(Node):
         # Only start when both Ping & Marker msgs are in memory.
         if self.receive_ping and self.receive_marker:
             current = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
-            
-            rows, columns = current.shape
-            self.n_bins, self.n_beams = rows, columns
 
-            # Lee filter. Better for multiplicative noise.
-            # current = self.lee_filter(current, kernel_size=5)
-
-            # Zero out the middle 10 columns
-            h, w = current.shape
-            mid = w // 2
-            # current[:, mid - 15 : mid] = 0
-
-            # Parameters
-            top_width = 20
-            bottom_width = 15
-            bottom_offset = 20  # pixels left of center at bottom
-
-            # Row coordinates [0 .. h-1]
-            y = np.arange(h, dtype=np.float32)
-            frac = y / (h - 1)
-
-            # Width tapers from 20 → 1
-            widths = np.round(top_width + frac * (bottom_width - top_width)).astype(int)
-
-            # Left boundary moves so the wedge ends at (mid - bottom_offset)
-            top_left = mid - top_width
-            bottom_left = mid - bottom_offset
-
-            left_bounds = np.round(
-                top_left + frac * (bottom_left - top_left)
-            ).astype(int)
-
-            # Column coordinates
-            x = np.arange(w)
-
-            # Build mask: True where pixels should be zeroed
-            mask = (x[None, :] >= left_bounds[:, None]) & \
-                (x[None, :] < (left_bounds + widths)[:, None])
-
-            # Apply mask
-            current[mask] = 0
-
-            # Median Filtering, Higher ksize, stronger smoothening, higher comp
-            # current = cv2.medianBlur(current, ksize=11)
-            
-            self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
+            current = self.image_preprocess(current)
 
             # === Convert all valid pixels to sensor frame coordinates ===
             edge_list, sensor_frame = self.extract_points_in_sensor_frame(current, mode=self.filter_mode)
@@ -408,7 +364,54 @@ class FLS_PCL(Node):
                     self.get_logger().warn(f'Transform not available: {e}')
             except TransformException as e:
                 self.get_logger().warn(f'Transform not available: {e}')     
+    
+    def image_preprocess(self, current):
+        rows, columns = current.shape
+        self.n_bins, self.n_beams = rows, columns
 
+        # Lee filter. Better for multiplicative noise.
+        # current = self.lee_filter(current, kernel_size=5)
+
+        # Zero out the middle 10 columns
+        h, w = current.shape
+        mid = w // 2
+        # current[:, mid - 15 : mid] = 0
+
+        # Parameters
+        top_width = 20
+        bottom_width = 15
+        bottom_offset = 20  # pixels left of center at bottom
+
+        # Row coordinates [0 .. h-1]
+        y = np.arange(h, dtype=np.float32)
+        frac = y / (h - 1)
+
+        # Width tapers from 20 → 1
+        widths = np.round(top_width + frac * (bottom_width - top_width)).astype(int)
+
+        # Left boundary moves so the wedge ends at (mid - bottom_offset)
+        top_left = mid - top_width
+        bottom_left = mid - bottom_offset
+
+        left_bounds = np.round(
+            top_left + frac * (bottom_left - top_left)
+        ).astype(int)
+
+        # Column coordinates
+        x = np.arange(w)
+
+        # Build mask: True where pixels should be zeroed
+        mask = (x[None, :] >= left_bounds[:, None]) & \
+            (x[None, :] < (left_bounds + widths)[:, None])
+
+        # Apply mask
+        current[mask] = 0
+
+        # Median Filtering, Higher ksize, stronger smoothening, higher comp
+        # current = cv2.medianBlur(current, ksize=11)
+        
+        self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
+        
     def create_voxel_corresponding_points(self, voxel_points:np.ndarray, geometry_points:np.ndarray):
         '''
         Finding the closest geometry_points corresponding to the voxel_points.
