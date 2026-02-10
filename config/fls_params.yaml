@@ -20,14 +20,10 @@
         min_probability: 0.1
         max_probability: 0.9
 
-      elevation:
-        center_beam_probability: 1.0
-        edge_beam_probability: 0.6
-
       sonar_params:
         frequency: 1.2e6          # Frequency: 1.2 MHz. e is exponent.
         sound_speed: 1500         # m/s
-        aperture_size: 0.0065     # 0.0065 m
+        aperture_size: 0.0067     # 0.0067 m
 
     ## Stonefish
     # frame_id: 'alpha_rise/fls_link_sf'
