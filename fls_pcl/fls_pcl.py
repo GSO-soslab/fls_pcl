@@ -86,12 +86,6 @@ class FLS_PCL(Node):
             self.declare_parameter('probabilistic_intensity.intensity.max_probability', Parameter.Type.DOUBLE)
             self.max_prob = self.get_parameter('probabilistic_intensity.intensity.max_probability').value
 
-            self.declare_parameter('probabilistic_intensity.elevation.center_beam_probability', Parameter.Type.DOUBLE)
-            self.elevation_beam_center_probability = self.get_parameter('probabilistic_intensity.elevation.center_beam_probability').value
-
-            self.declare_parameter('probabilistic_intensity.elevation.edge_beam_probability', Parameter.Type.DOUBLE)
-            self.elevation_beam_edge_probability = self.get_parameter('probabilistic_intensity.elevation.edge_beam_probability').value
-
             self.declare_parameter('probabilistic_intensity.sonar_params.frequency', Parameter.Type.DOUBLE)
             self.frequency = self.get_parameter('probabilistic_intensity.sonar_params.frequency').value
 
@@ -125,8 +119,9 @@ class FLS_PCL(Node):
             non_zero_mask = np.abs(temp) > 1e-10
             
             # === DI = sinc(kh/2*sin(elevation_angle)) ===
+            # === round to 2 precision ===
             DI[non_zero_mask] = np.sin(temp[non_zero_mask]) / temp[non_zero_mask]
-            self.beam_probs = np.clip(DI, self.elevation_beam_edge_probability, self.elevation_beam_center_probability)
+            self.beam_probs = np.array([round(theta_prob, 2) for theta_prob in DI], dtype=np.float32)
 
         # === CV bridge ===
         self.bridge = CvBridge()
@@ -237,51 +232,44 @@ class FLS_PCL(Node):
             raw_intensity = sensor_frame[:, 2].astype(np.float32)
             
             if self.filter_mode == 'probabilistic_intensity':
-                # Direct broadcast-ready arrays
-                x = sensor_x[None, :]   # (1, N)
-                y = sensor_y[None, :]
-                z = np.zeros_like(sensor_x)[None, :]
 
-                # === Rotate around Y (broadcasted) ===
-                x_r = x * self.cos_a + z * self.sin_a
-                y_r = y * np.ones_like(x_r)  # (B, N)
-                z_r = -x * self.sin_a + z * self.cos_a
+                if not self.bool_create_sonar_geometry:
+                    # === Fixed geometry — compute and cache once ===
+                    x = sensor_x[None, :]   # (1, N)
+                    y = sensor_y[None, :]
+                    z = np.zeros_like(sensor_x)[None, :]
 
-                # === Stack rotated points ===
-                rotated_points = np.stack((x_r, y_r, z_r), axis=-1)
-                # shape: (B, N, 3)
+                    # === Rotate around Y (broadcasted) ===
+                    x_r = x * self.cos_a + z * self.sin_a
+                    y_r = y * np.ones_like(x_r)  # (B, N)
+                    z_r = -x * self.sin_a + z * self.cos_a
 
-                # === Joint probability ===
-                # P = P_point * P_beam
-                final_probs = raw_intensity[None, :] * self.beam_probs[:, None]
-                # shape: (B, N)
+                    all_points = np.stack((x_r, y_r, z_r), axis=-1).reshape(-1, 3)  # (B*N, 3)
 
-                # === Flatten to match your original output ===
-                all_points = rotated_points.reshape(-1, 3)   # (B*N, 3)
-                all_probs  = final_probs.reshape(-1)          # (B*N,)
+                    # Range filter mask
+                    ranges_xy = np.hypot(all_points[:, 0], all_points[:, 1])
+                    self._geom_mask = ranges_xy >= self.threshold_min_range
+                    filtered_points = all_points[self._geom_mask]
 
-                # Range Filtering
-                ranges_xy = np.hypot(all_points[:, 0], all_points[:, 1])
-                mask = ranges_xy >= self.threshold_min_range
-                filtered_points = all_points[mask]
-                filtered_probs = all_probs[mask]
+                    # Voxel correspondence
+                    self.indices, _ = self.create_voxel_corresponding_points(self.voxel_centroids, filtered_points, method="closest_to_centroid", intensities=None)
+                    self.cached_positions = filtered_points[self.indices]
 
-                # Ensure N(points) = N(voxels)
-                indices, _ = self.create_voxel_corresponding_points(self.voxel_centroids, filtered_points)
-                # Filter points by probability > 0.5
-                prob_mask = filtered_probs[indices] > 0.0
-                indices = indices[prob_mask]
-                
-                num_points = indices.shape[0]
+                    num_points = self.indices.shape[0]
+                    self.pointcloud_msg.width = num_points
+                    self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
+                    self.bool_create_sonar_geometry = True
 
-                self.pointcloud_msg.width = num_points
-                self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
+                # === Per-frame: probabilities only ===
+                # shape: (B*N,) → filter → index
+                all_probs = (raw_intensity[None, :] * self.beam_probs[:, None]).reshape(-1)
+                filtered_probs = all_probs[self._geom_mask]
 
-                self.points = np.full((num_points, len(self.fields)), np.nan, dtype=np.float32)
-                # Position
-                self.points[:, 0:3] = filtered_points[indices]
-                # Probability
-                self.points[:, 3] = filtered_probs[indices]
+                self.points = np.full((self.pointcloud_msg.width, len(self.fields)), np.nan, dtype=np.float32)
+                # Position (fixed geometry)
+                self.points[:, 0:3] = self.cached_positions
+                # Probability (updated every frame)
+                self.points[:, 3] = filtered_probs[self.indices]
                 
             else:
                 # Use points as-is from sensor_frame
@@ -411,27 +399,127 @@ class FLS_PCL(Node):
         # current = cv2.medianBlur(current, ksize=11)
         
         self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
+
+        return current
         
-    def create_voxel_corresponding_points(self, voxel_points:np.ndarray, geometry_points:np.ndarray):
+    def create_voxel_corresponding_points(self, voxel_points:np.ndarray, geometry_points:np.ndarray, method, intensities:np.ndarray=None):
         '''
         Finding the closest geometry_points corresponding to the voxel_points.
-        
+
         :param geometry_points: List of geometry centroids (x,y,z)
         :param voxel_points: List of voxel centroids (x,y,z)
+        :param intensities: Required for method="max_pool". Per-point intensity values aligned with geometry_points.
 
-        :return list of geometry_points (x,y,z) that is closest correspondence with voxel_points. Same size as of voxel_points 
+        :return (indices, distances_or_peak_intensities)
         '''
-        voxel_points = np.asarray(voxel_points, dtype=np.float32)
-        geometry_points = np.asarray(geometry_points, dtype=np.float32)
+        if method == "closest_to_centroid":
+            voxel_points = np.asarray(voxel_points, dtype=np.float32)
+            geometry_points = np.asarray(geometry_points, dtype=np.float32)
 
-        # Build KD-tree on geometry_points.
-        tree = cKDTree(geometry_points)
+            # Build KD-tree on geometry_points.
+            tree = cKDTree(geometry_points)
 
-        # Query nearest neighbor for each voxel
-        distance, indices = tree.query(voxel_points, k=1)
+            # Query nearest neighbor for each voxel
+            distance, indices = tree.query(voxel_points, k=1)
 
-        return indices, distance
-    
+            return indices, distance
+
+        elif method == "max_pool":
+            voxel_points    = np.asarray(voxel_points,    dtype=np.float32)
+            geometry_points = np.asarray(geometry_points, dtype=np.float32)
+            intensities     = np.asarray(intensities,     dtype=np.float32)
+
+            # === Geometry (fixed) — cache once ===
+            if not hasattr(self, '_max_pool_cache'):
+                tree_v = cKDTree(voxel_points)
+
+                # Estimate voxel cell half-size from nearest-neighbour spacing
+                nn_dists, _ = tree_v.query(voxel_points, k=2)
+                half_size = float(np.median(nn_dists[:, 1])) / 2.0
+
+                # Assign every sensor point to its nearest voxel (264K → 1160 tree)
+                dists, voxel_assignment = tree_v.query(geometry_points, k=1)
+
+                # Keep only sensor points that fall inside the voxel cell
+                in_cell = dists <= half_size
+                self._max_pool_cache = {
+                    'valid_sensor_idx': np.where(in_cell)[0],
+                    'valid_voxel_idx':  voxel_assignment[in_cell],
+                    'in_cell':          in_cell,
+                    'n_voxels':         len(voxel_points),
+                }
+
+            valid_sensor_idx = self._max_pool_cache['valid_sensor_idx']
+            valid_voxel_idx  = self._max_pool_cache['valid_voxel_idx']
+            in_cell          = self._max_pool_cache['in_cell']
+            n_voxels         = self._max_pool_cache['n_voxels']
+
+            # === Per-frame: intensities only ===
+            valid_intensities = intensities[in_cell]
+
+            peak_indices     = np.full(n_voxels, -1, dtype=np.int64)
+            peak_intensities = np.zeros(n_voxels, dtype=np.float32)
+
+            if valid_sensor_idx.size > 0:
+                # Sort by (voxel_id asc, intensity desc) → first entry per voxel = peak
+                order = np.lexsort((-valid_intensities, valid_voxel_idx))
+                sv = valid_voxel_idx[order]
+                ss = valid_sensor_idx[order]
+                si = valid_intensities[order]
+
+                _, first = np.unique(sv, return_index=True)
+                peak_indices[sv[first]]     = ss[first]
+                peak_intensities[sv[first]] = si[first]
+
+            return peak_indices, peak_intensities
+
+        elif method == "median_pool":
+            voxel_points    = np.asarray(voxel_points,    dtype=np.float32)
+            geometry_points = np.asarray(geometry_points, dtype=np.float32)
+            intensities     = np.asarray(intensities,     dtype=np.float32)
+
+            # === Geometry (fixed) — cache once ===
+            if not hasattr(self, '_median_pool_cache'):
+                tree_v = cKDTree(voxel_points)
+
+                nn_dists, _ = tree_v.query(voxel_points, k=2)
+                half_size = float(np.median(nn_dists[:, 1])) / 2.0
+
+                dists, voxel_assignment = tree_v.query(geometry_points, k=1)
+
+                in_cell = dists <= half_size
+                self._median_pool_cache = {
+                    'valid_sensor_idx': np.where(in_cell)[0],
+                    'valid_voxel_idx':  voxel_assignment[in_cell],
+                    'in_cell':          in_cell,
+                    'n_voxels':         len(voxel_points),
+                }
+
+            valid_sensor_idx = self._median_pool_cache['valid_sensor_idx']
+            valid_voxel_idx  = self._median_pool_cache['valid_voxel_idx']
+            in_cell          = self._median_pool_cache['in_cell']
+            n_voxels         = self._median_pool_cache['n_voxels']
+
+            # === Per-frame: intensities only ===
+            valid_intensities = intensities[in_cell]
+
+            median_indices     = np.full(n_voxels, -1, dtype=np.int64)
+            median_intensities = np.zeros(n_voxels, dtype=np.float32)
+
+            if valid_sensor_idx.size > 0:
+                # Sort by (voxel_id asc, intensity asc) → middle entry per voxel = median
+                order = np.lexsort((valid_intensities, valid_voxel_idx))
+                sv = valid_voxel_idx[order]
+                ss = valid_sensor_idx[order]
+                si = valid_intensities[order]
+
+                _, first, counts = np.unique(sv, return_index=True, return_counts=True)
+                mid = first + counts // 2
+                median_indices[sv[first]]     = ss[mid]
+                median_intensities[sv[first]] = si[mid]
+
+            return median_indices, median_intensities
+
     def extract_points_in_sensor_frame(self, image:np.ndarray, mode='threshold_intensity'):
         """
         Convert pixels in the image into sensor-frame coordinates (x, y, intensity),
@@ -464,52 +552,48 @@ class FLS_PCL(Node):
             |          v 
          y  v          -      <-------- Sensor Origin
         """
-        #40m / 517 beams = 0.07m/beams
-        meters_per_beam = self.max_range / self.n_bins 
-
         # Create coordinate grids
         rows, cols = np.indices(image.shape)
         rows_flat = rows.flatten()
         cols_flat = cols.flatten()
         intensities = image.flatten()
 
-        theta_values = self.bearings[cols_flat]
-        r_values = meters_per_beam * (self.n_bins - rows_flat)
-
-        # Convert to sensor frame (x, y)
-        sensor_x = r_values * np.cos(theta_values) #len(sensor_x) = len(sensor_y) = 512*517 = 264704
-        sensor_y = r_values * np.sin(theta_values)
+        # Convert to sensor frame (x, y) — cache cos/sin since geometry is fixed
+        if not hasattr(self, '_cached_sensor_xy'):
+            theta_values = self.bearings[cols_flat]
+            #40m / 517 beams = 0.07m/beams
+            meters_per_beam = self.max_range / self.n_bins
+            r_values = meters_per_beam * (self.n_bins - rows_flat)
+            self._cached_sensor_xy = (
+                r_values * np.cos(theta_values),  # sensor_x
+                r_values * np.sin(theta_values),  # sensor_y
+            )
+        sensor_x, sensor_y = self._cached_sensor_xy
         # print(len(sensor_x), flush=True)
 
-        # Apply beam skipping
-        indices = np.arange(len(sensor_x))
-        mask_beam_skip = (indices % self.beam_skip_count) == 0
-    
         if mode == 'probabilistic_intensity':
             
-            if not self.bool_create_sonar_geometry:
-                # Build KD-tree from voxel points
-                z = self.voxel_centroids[:, 2]
+            # Build KD-tree from voxel points
+            z = self.voxel_centroids[:, 2]
 
-                # Mask for voxels on sensor plane
-                z0_mask = np.isclose(z, 0.0)   # safer than z == 0 for floats
+            # Mask for voxels on sensor plane
+            z0_mask = np.isclose(z, 0.0)   # safer than z == 0 for floats
 
-                # Keep only z = 0 voxels
-                voxel_centroids_z0 = self.voxel_centroids[z0_mask]   # (7646, 3)
+            # Keep only z = 0 voxels
+            voxel_centroids_z0 = self.voxel_centroids[z0_mask]   # (7646, 3)
 
-                # Use only XY for correspondence
-                voxel_points_xy = voxel_centroids_z0[:, :2]          # (1160, 2)
-                
-                # Stack sensor points
-                sensor_xy = np.column_stack((sensor_x, sensor_y))  # sensor_xy.shape: (264706, 2)
-                
-                # Extract occupancy points from SONAR frame which form correspondence with voxel centroids.
-                self.sensor_indices, distance = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy) #self.sensor_indices: (1160,)
-                
-                self.bool_create_sonar_geometry = True
+            # Use only XY for correspondence
+            voxel_points_xy = voxel_centroids_z0[:, :2]          # (1160, 2)
+            
+            # Stack sensor points
+            sensor_xy = np.column_stack((sensor_x, sensor_y))  # sensor_xy.shape: (264706, 2)
+            
+            # Extract occupancy points from SONAR frame which form correspondence with voxel centroids.
+            self.sensor_indices, intensities = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy, method="median_pool", intensities=intensities)
 
-            # Get intensities corresponding to the matched points
-            intensities = intensities[self.sensor_indices]  # (N,)
+            # self.sensor_indices, _ = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy, method="closest_to_centroid", intensities=intensities)
+            # intensities = intensities[self.sensor_indices]
+
             # Also get original sensor info corresponding to each voxel
             rows_flat   = rows_flat[self.sensor_indices]   # (N,)
             cols_flat   = cols_flat[self.sensor_indices]   # (N,)
@@ -531,9 +615,8 @@ class FLS_PCL(Node):
             # Anything above upper threshold → max_prob
             probabilities[intensities >= self.upper_bound_intensity] = 0.9
 
-            # Optional: round to nearest 0.1
-            probabilities = np.round(probabilities * 10) / 10
-            intensities = probabilities
+            # Round to nearest 0.1
+            intensities = np.round(probabilities * 10) / 10
 
         elif mode == 'max_intensity':
             # Step 0: apply minimum range threshold
@@ -665,13 +748,7 @@ class FLS_PCL(Node):
             point_step = msg.point_step
             fields = msg.fields
 
-            points = []
-            for i in range(0, len(pc_data), point_step):
-                point_bytes = pc_data[i:i + point_step]
-                x, y, z, intensity = struct.unpack('ffff', point_bytes)
-                points.append([x, y, z, intensity])
-
-            np_points = np.array(points)
+            np_points = np.frombuffer(bytes(pc_data), dtype=np.float32).reshape(-1, point_step // 4)[:, :4]
 
             cloud = o3d.geometry.PointCloud()
             cloud.points = o3d.utility.Vector3dVector(np_points[:, :3])
