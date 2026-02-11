@@ -17,7 +17,7 @@
       intensity:
         lower_bound_intensity: 22
         upper_bound_intensity: 50
-        min_probability: 0.1
+        min_probability: 0.2
         max_probability: 0.9
 
       sonar_params:
