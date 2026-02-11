@@ -594,14 +594,14 @@ class FLS_PCL(Node):
             # self.sensor_indices, _ = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy, method="closest_to_centroid", intensities=intensities)
             # intensities = intensities[self.sensor_indices]
 
-            # Also get original sensor info corresponding to each voxel
-            rows_flat   = rows_flat[self.sensor_indices]   # (N,)
+            # Spatial coordinates are voxel centroids; image coords from winning sensor point (unused)
+            rows_flat   = rows_flat[self.sensor_indices]   # (N,) — edge_list not consumed upstream
             cols_flat   = cols_flat[self.sensor_indices]   # (N,)
-            sensor_x    = sensor_x[self.sensor_indices]    # (N,)
-            sensor_y    = sensor_y[self.sensor_indices]    # (N,)
+            sensor_x    = voxel_points_xy[:, 0]            # voxel centroid x
+            sensor_y    = voxel_points_xy[:, 1]            # voxel centroid y
 
             # Start with all values at min_prob
-            probabilities = np.full_like(intensities, 0.1, dtype=float)
+            probabilities = np.full_like(intensities, self.min_prob, dtype=float)
 
             # Mask for linear interpolation range
             mid_mask = (intensities > self.lower_bound_intensity) & (intensities < self.upper_bound_intensity)
