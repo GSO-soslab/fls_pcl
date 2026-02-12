@@ -11,12 +11,11 @@ from tf2_ros import Buffer, TransformListener
 import tf2_sensor_msgs.tf2_sensor_msgs
 import sensor_msgs_py.point_cloud2 as pc2
 from tf2_ros import TransformException
-import struct
 from scipy.ndimage import uniform_filter
-from math import nan
 from oculus_interfaces.msg import Ping
 from visualization_msgs.msg import Marker
 from scipy.spatial import cKDTree
+import cv2
 
 class FLS_PCL(Node):
     """
@@ -136,7 +135,7 @@ class FLS_PCL(Node):
 
         # === Publishers ===
         self.pub_pcl = self.create_publisher(PointCloud2, pub_topic, 10)
-        self.pub_fls_median_image = self.create_publisher(Image, pub_topic+'/image/median', 10)
+        self.pub_fls_median_image = self.create_publisher(Image, pub_topic+'/image/filtered', 10)
 
         # === Subscribers === 
         self.sub_image = self.create_subscription(Image, self.get_parameter('image_sub_topic').value, self.image_CB,10)
@@ -223,6 +222,7 @@ class FLS_PCL(Node):
             current = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
 
             current = self.image_preprocess(current)
+            self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
 
             # === Convert all valid pixels to sensor frame coordinates ===
             edge_list, sensor_frame = self.extract_points_in_sensor_frame(current, mode=self.filter_mode)
@@ -353,6 +353,38 @@ class FLS_PCL(Node):
             except TransformException as e:
                 self.get_logger().warn(f'Transform not available: {e}')     
     
+    def anisotropic_diffusion(self, image, niter=10, kappa=30, gamma=0.1):
+        """
+        Perona-Malik anisotropic diffusion.
+
+        Smooths homogeneous regions while preserving edges.
+
+        :param image: uint8 or float input image
+        :param niter:  number of diffusion iterations
+        :param kappa:  edge-sensitivity threshold — lower = more edge preservation
+        :param gamma:  diffusion rate per iteration (≤ 0.25 for stability)
+        :return: diffused image, same dtype as input
+        """
+        src_dtype = image.dtype
+        img = image.astype(np.float32)
+
+        for _ in range(niter):
+            # Gradients in 4 directions
+            dN = np.roll(img,  1, axis=0) - img
+            dS = np.roll(img, -1, axis=0) - img
+            dE = np.roll(img, -1, axis=1) - img
+            dW = np.roll(img,  1, axis=1) - img
+
+            # Perona-Malik conductance (exponential)
+            cN = np.exp(-(dN / kappa) ** 2)
+            cS = np.exp(-(dS / kappa) ** 2)
+            cE = np.exp(-(dE / kappa) ** 2)
+            cW = np.exp(-(dW / kappa) ** 2)
+
+            img += gamma * (cN * dN + cS * dS + cE * dE + cW * dW)
+
+        return np.clip(img, 0, 255).astype(src_dtype)
+
     def image_preprocess(self, current):
         rows, columns = current.shape
         self.n_bins, self.n_beams = rows, columns
@@ -395,11 +427,8 @@ class FLS_PCL(Node):
         # Apply mask
         current[mask] = 0
 
-        # Median Filtering, Higher ksize, stronger smoothening, higher comp
-        # current = cv2.medianBlur(current, ksize=11)
-        
-        self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
-
+        # Anisotropic diffusion — smooths homogeneous regions, preserves edges
+        current = self.anisotropic_diffusion(current, niter=5, kappa=30, gamma=0.1)
         return current
         
     def create_voxel_corresponding_points(self, voxel_points:np.ndarray, geometry_points:np.ndarray, method, intensities:np.ndarray=None):
@@ -589,8 +618,9 @@ class FLS_PCL(Node):
             sensor_xy = np.column_stack((sensor_x, sensor_y))  # sensor_xy.shape: (264706, 2)
             
             # Extract occupancy points from SONAR frame which form correspondence with voxel centroids.
-            self.sensor_indices, intensities = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy, method="median_pool", intensities=intensities)
-
+            self.sensor_indices, intensities = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy, method="max_pool", intensities=intensities)
+            
+            #=== Uncomment for closest_to_centroid===
             # self.sensor_indices, _ = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy, method="closest_to_centroid", intensities=intensities)
             # intensities = intensities[self.sensor_indices]
 
@@ -699,35 +729,6 @@ class FLS_PCL(Node):
         sensor_frame_coordinates = np.column_stack((sensor_x, sensor_y, intensities))
 
         return image_coordinates, sensor_frame_coordinates
-    
-    def lee_filter(self, image, kernel_size=5):
-        """
-        Lee filter for speckle noise reduction.
-        
-        Parameters:
-            image (np.ndarray): Grayscale image (uint8 or float)
-            kernel_size (int): Odd window size
-        
-        Returns:
-            np.ndarray: Filtered image
-        """
-        image = image.astype(np.float32)
-
-        # Local mean
-        local_mean = uniform_filter(image, kernel_size)
-
-        # Local variance
-        local_mean_sq = uniform_filter(image**2, kernel_size)
-        local_var = local_mean_sq - local_mean**2
-
-        # Estimate noise variance (global)
-        noise_var = np.mean(local_var)
-
-        # Lee filter
-        weight = local_var / (local_var + noise_var)
-        filtered = local_mean + weight * (image - local_mean)
-
-        return np.clip(filtered, 0, 255).astype(np.uint8)
     
     def pointcloud_CB(self, msg):
         '''
