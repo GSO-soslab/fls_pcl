@@ -55,16 +55,17 @@ def generate_launch_description():
         output='screen',
     )
 
-
-    sonar_fov = Node(
-        package='fls_pcl',
-        executable='fls_voxels.py',
-        name='sonar_visualization',
-        namespace="alpha_rise",
-        output='screen',
-        parameters=[{
-            'use_sim_time': True
-        }]
+    fls_voxel = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('fls_pcl'),
+                'launch',
+                'fls_voxel.launch.py'
+            )
+        ),
+        launch_arguments={
+            'use_sim_time': 'true'
+        }.items()  
     )
 
     msis_fov = Node(
@@ -155,30 +156,32 @@ def generate_launch_description():
                             # rosbag2_2025_12_05-17_09_41: gain = 2
                             # rosbag2_2025_12_05-17_22_29: gain = 2
                             # rosbag2_2025_12_05-17_35_12: gain = 2
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_10_10/rosbag2_2025_10_10-18_09_27/rosbag2_2025_10_10-18_09_28'
+    
     #Whale Rock 12/5
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_29_36/rosbag2_2025_12_05-15_29_38'
-    bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_57_34/rosbag2_2025_12_05-15_57_35'
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_09_45/rosbag2_2025_12_05-16_09_47'
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_26_08/rosbag2_2025_12_05-16_26_09'
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_43_41/rosbag2_2025_12_05-16_43_42'
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_54_58/rosbag2_2025_12_05-16_55_00'
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_09_41/rosbag2_2025_12_05-17_09_42'
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_22_29/rosbag2_2025_12_05-17_22_30'
-    # bag_file_path = '/home/tony/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_35_12/rosbag2_2025_12_05-17_35_13'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_29_36/rosbag2_2025_12_05-15_29_38'
+    bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_57_34/rosbag2_2025_12_05-15_57_35'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_09_45/rosbag2_2025_12_05-16_09_47'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_26_08/rosbag2_2025_12_05-16_26_09'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_43_41/rosbag2_2025_12_05-16_43_42'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_54_58/rosbag2_2025_12_05-16_55_00'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_09_41/rosbag2_2025_12_05-17_09_42'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_22_29/rosbag2_2025_12_05-17_22_30'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_35_12/rosbag2_2025_12_05-17_35_13'
 
     # ROS2 bag play command
     bag_play = ExecuteProcess(
         cmd=[
             'ros2', 'bag', 'play', bag_file_path,
             # '--start-offset', '70.0',
-            '--rate', '4.0', ##FOR SOME REASON TF WORKS BEST WITH 4.0
+            '--rate', '1.0', ##FOR SOME REASON TF WORKS BEST WITH 4.0
             '--clock'
         ],
         output='screen'
     )
 
     ld.add_action(fls_pcl)
-    ld.add_action(sonar_fov)
+    ld.add_action(fls_voxel)
     # ld.add_action(fls_intensity_plot_node)
     ld.add_action(bag_play)
 
