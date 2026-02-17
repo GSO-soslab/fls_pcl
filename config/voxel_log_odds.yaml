@@ -23,7 +23,14 @@
       # sub_pointcloud_topic:  "/alpha_rise/msis/pointcloud/fan"
 
       pub_pointcloud_topic: "/occupancy_grid"
+
+      # Depth range in frame_id frame for OccupancyGrid filtering
+      depth_min: -100.0
+      depth_max:  -5.0
+
+      # OccupancyGrid output topic
+      pub_occupancy_grid_topic: "/occupancy_grid_2d"
       
-      output_pcd_file: "fls_voxel_prob_full_map.pcd"
+      output_pcd_file: "anisotropic_diffusion_0_9_.pcd"
 
       save_pcd: false

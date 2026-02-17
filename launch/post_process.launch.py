@@ -68,6 +68,19 @@ def generate_launch_description():
         }.items()  
     )
 
+    voxel_log_odds = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('fls_pcl'),
+                'launch',
+                'voxel_log_odds.launch.py'
+            )
+        ),
+        launch_arguments={
+            'use_sim_time': 'true'
+        }.items()
+    )
+
     msis_fov = Node(
         package='pcl_proc',
         executable='msis_voxels',
@@ -174,7 +187,7 @@ def generate_launch_description():
         cmd=[
             'ros2', 'bag', 'play', bag_file_path,
             # '--start-offset', '70.0',
-            '--rate', '1.0', ##FOR SOME REASON TF WORKS BEST WITH 4.0
+            '--rate', '4.0', ##FOR SOME REASON TF WORKS BEST WITH 4.0
             '--clock'
         ],
         output='screen'
@@ -182,6 +195,7 @@ def generate_launch_description():
 
     ld.add_action(fls_pcl)
     ld.add_action(fls_voxel)
+    ld.add_action(voxel_log_odds)
     # ld.add_action(fls_intensity_plot_node)
     ld.add_action(bag_play)
 
