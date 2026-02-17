@@ -200,8 +200,8 @@ def generate_launch_description():
     ld.add_action(bag_play)
 
     ld.add_action(rviz)
-    # ld.add_action(msis_fov)
-    # ld.add_action(msis_fan)
+    ld.add_action(msis_fov)
+    ld.add_action(msis_fan)
     # ld.add_action(path)
 
 

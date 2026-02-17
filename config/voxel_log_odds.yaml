@@ -20,7 +20,9 @@
 
       # Pointcloud topic to subscribe
       sub_pointcloud_topic:  "/alpha_rise/fls/pointcloud/post"
-      # sub_pointcloud_topic:  "/alpha_rise/msis/pointcloud/fan"
+
+      # Second pointcloud source (MSIS fan)
+      sub_pointcloud_topic_2: "/alpha_rise/msis/pointcloud/fan"
 
       pub_pointcloud_topic: "/occupancy_grid"
 

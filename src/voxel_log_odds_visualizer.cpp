@@ -63,6 +63,9 @@ public:
         this->declare_parameter<std::string>("sub_pointcloud_topic", "/pointcloud");
         this->get_parameter("sub_pointcloud_topic", sub_pointcloud_topic_);
 
+        this->declare_parameter<std::string>("sub_pointcloud_topic_2", "");
+        this->get_parameter("sub_pointcloud_topic_2", sub_pointcloud_topic_2_);
+
         // Changed parameter name to reflect PointCloud2 output
         this->declare_parameter<std::string>("pub_pointcloud_topic", "/occupancy_grid");
         this->get_parameter("pub_pointcloud_topic", pub_pointcloud_topic_);
@@ -88,7 +91,14 @@ public:
             sub_pointcloud_topic_, 10,
             std::bind(&VoxelLogOddsVisualizer::pcCallback, this, std::placeholders::_1)
         );
-        
+
+        if (!sub_pointcloud_topic_2_.empty()) {
+            pc_sub_2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                sub_pointcloud_topic_2_, 10,
+                std::bind(&VoxelLogOddsVisualizer::pcCallback, this, std::placeholders::_1)
+            );
+        }
+
         // Changed to PointCloud2 publisher instead of MarkerArray
         pc_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
            pub_pointcloud_topic_, 10
@@ -117,6 +127,7 @@ private:
     double half_grid_;
     std::string frame_id_;
     std::string sub_pointcloud_topic_;
+    std::string sub_pointcloud_topic_2_;
     std::string pub_pointcloud_topic_;
     double prob_threshold_;
     int n_voxels_;
@@ -128,6 +139,7 @@ private:
     std::unordered_map<Key2D, double, Key2DHash> logodds_2d_grid_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_;
+    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_2_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr og_pub_;
 
