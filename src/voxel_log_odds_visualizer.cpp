@@ -8,6 +8,7 @@
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <nav_msgs/msg/odometry.hpp>
 #include <unordered_map>
 #include <tuple>
 #include <cmath>
@@ -32,15 +33,10 @@ struct KeyHash {
     }
 };
     
-struct Key2D { int x, y; bool operator==(const Key2D& o) const { return x==o.x && y==o.y; } };
-struct Key2DHash {
-    std::size_t operator()(const Key2D& k) const {
-        return std::hash<int>()(k.x) ^ (std::hash<int>()(k.y) << 1);
-    }
-};
 
 class VoxelLogOddsVisualizer : public rclcpp::Node {
 public:
+    //Constructor
     VoxelLogOddsVisualizer() : Node("voxel_logodds_visualizer") {
         this->declare_parameter<double>("voxel_resolution", 1.0);
         this->get_parameter("voxel_resolution", voxel_res_);
@@ -76,10 +72,15 @@ public:
         this->declare_parameter<bool>("save_pcd", false);
         this->get_parameter("save_pcd", save_pcd_);
 
-        this->declare_parameter<double>("depth_min", -1.0);
-        this->get_parameter("depth_min", depth_min_);
-        this->declare_parameter<double>("depth_max",  1.0);
-        this->get_parameter("depth_max", depth_max_);
+        this->declare_parameter<std::string>("sub_odometry_topic", "/odometry");
+        this->get_parameter("sub_odometry_topic", sub_odometry_topic_);
+
+        this->declare_parameter<double>("depth_deviation", 1.0);
+        this->get_parameter("depth_deviation", depth_deviation_);
+
+        this->declare_parameter<double>("z_cutoff", -1.0);
+        this->get_parameter("z_cutoff", z_cutoff_);
+
         this->declare_parameter<std::string>("pub_occupancy_grid_topic", "/occupancy_grid_2d");
         this->get_parameter("pub_occupancy_grid_topic", pub_og_topic_);
 
@@ -92,19 +93,22 @@ public:
             std::bind(&VoxelLogOddsVisualizer::pcCallback, this, std::placeholders::_1)
         );
 
-        if (!sub_pointcloud_topic_2_.empty()) {
-            pc_sub_2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
+        pc_sub_2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
                 sub_pointcloud_topic_2_, 10,
                 std::bind(&VoxelLogOddsVisualizer::pcCallback, this, std::placeholders::_1)
-            );
-        }
+        );
+
+        odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            sub_odometry_topic_, 10,
+            std::bind(&VoxelLogOddsVisualizer::odometryCallback, this, std::placeholders::_1)
+        );
 
         // Changed to PointCloud2 publisher instead of MarkerArray
-        pc_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+        prob_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
            pub_pointcloud_topic_, 10
         );
 
-        og_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(pub_og_topic_, 10);
+        ogm_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(pub_og_topic_, 10);
 
         // TF listener
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
@@ -113,7 +117,8 @@ public:
         RCLCPP_INFO(this->get_logger(), "VoxelLogOddsVisualizer initialized. Grid size: %.2fm, resolution: %.2fm",
                     grid_size_, voxel_res_);
     }
-        
+
+    //Destructor
     ~VoxelLogOddsVisualizer() { 
         if (save_pcd_) {
             RCLCPP_INFO(this->get_logger(), "Shutting down, saving PCD file...");
@@ -134,14 +139,17 @@ private:
     bool save_pcd_;
 
     std::string pub_og_topic_;
-    double depth_min_, depth_max_;
+    std::string sub_odometry_topic_;
+    double depth_deviation_;
+    double z_cutoff_;
+    double vehicle_z_{0.0};
     std::unordered_map<VoxelKey, double, KeyHash> logodds_grid_;
-    std::unordered_map<Key2D, double, Key2DHash> logodds_2d_grid_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_2_;
-    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pc_pub_;
-    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr og_pub_;
+    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+    rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr prob_cloud_pub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr ogm_pub_;
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -216,6 +224,10 @@ private:
         RCLCPP_INFO(this->get_logger(), "Saved %zu voxels to %s", num_voxels, filename.c_str());
     }
 
+    void odometryCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+        vehicle_z_ = msg->pose.pose.position.z;
+    }
+
     void pcCallback(const sensor_msgs::msg::PointCloud2::SharedPtr msg) {
         // Convert to frame_id_
         geometry_msgs::msg::TransformStamped trans;
@@ -275,12 +287,6 @@ private:
             // Clip
             logodds_grid_[key] = std::min(std::max(logodds_grid_[key], logodds_min_), logodds_max_);
 
-            // 2D occupancy grid update (depth-filtered)
-            if (p_map.z() >= depth_min_ && p_map.z() <= depth_max_) {
-                Key2D key2d{ix, iy};
-                logodds_2d_grid_[key2d] = std::min(std::max(
-                    logodds_2d_grid_[key2d] + evidence, logodds_min_), logodds_max_);
-            }
         }
 
         publishPointCloud();
@@ -358,35 +364,36 @@ private:
         nav_msgs::msg::OccupancyGrid og;
         og.header.stamp = this->get_clock()->now();
         og.header.frame_id = frame_id_;
-
-        // Grid dimensions match the 3D voxel map (same resolution and extent)
         og.info.resolution = static_cast<float>(voxel_res_);
         og.info.width  = n_voxels_;
         og.info.height = n_voxels_;
-
-        // Origin placed so the grid is centered at (0, 0) in frame_id_
         og.info.origin.position.x = -half_grid_;
         og.info.origin.position.y = -half_grid_;
         og.info.origin.orientation.w = 1.0;
-
-        // Initialize all cells to -1 (unknown); only observed cells will be filled
         og.data.assign(n_voxels_ * n_voxels_, -1);
 
-        for (const auto& kv : logodds_2d_grid_) {
-            const Key2D& k = kv.first;
+        // Dynamic depth band centred on vehicle Z, capped by hard cutoff
+        double depth_lo = vehicle_z_ - depth_deviation_;
+        double depth_hi = std::min(vehicle_z_ + depth_deviation_, z_cutoff_);
 
-            // Skip cells that fell outside the grid bounds
-            if (k.x < 0 || k.y < 0 || k.x >= n_voxels_ || k.y >= n_voxels_) continue;
+        // Project 3D log-odds grid → 2D: any voxel within depth band above threshold sets the cell
+        for (const auto& kv : logodds_grid_) {
+            const VoxelKey& key = kv.first;
 
             double prob = to_prob(kv.second);
-
-            // Only publish cells whose accumulated probability exceeds the threshold
             if (prob < prob_threshold_) continue;
 
-            // OccupancyGrid expects [0, 100]; scale probability accordingly
-            int8_t val = static_cast<int8_t>(std::round(prob * 100.0));
-            og.data[k.y * n_voxels_ + k.x] = val;
+            float z_world = key.z * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+            // Hard cutoff: discard anything above z_cutoff_ (default -1.0 m)
+            if (z_world > z_cutoff_) continue;
+            // Depth filtering relative to current vehicle depth
+            if (z_world < depth_lo || z_world > depth_hi) continue;
+
+            if (key.x < 0 || key.y < 0 || key.x >= n_voxels_ || key.y >= n_voxels_) continue;
+            // y = row, x = column
+            og.data[key.y * n_voxels_ + key.x] = static_cast<int8_t>(std::round(prob * 100.0)); 
         }
+
         og_pub_->publish(og);
     }
 

@@ -10,7 +10,7 @@
     ping_sub_topic: '/alpha_rise/oculus/ping'
     image_sub_topic: '/alpha_rise/oculus/raw_image'
     marker_sub_topic: '/alpha_rise/fls/geometry'
-    pointcloud_pub_topic: '/alpha_rise/fls/pointcloud/post'
+    pointcloud_pub_topic: '/alpha_rise/fls/pointcloud/fan'
     filter_mode: 'probabilistic_intensity' # threshold_intensity/max_intensity/probabilistic_intensity
 
     probabilistic_intensity:

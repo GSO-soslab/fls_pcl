@@ -255,9 +255,6 @@ class FLS_PCL(Node):
                     self.indices, _ = self.create_voxel_corresponding_points(self.voxel_centroids, filtered_points, method="closest_to_centroid", intensities=None)
                     self.cached_positions = filtered_points[self.indices]
 
-                    num_points = self.indices.shape[0]
-                    self.pointcloud_msg.width = num_points
-                    self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
                     self.bool_create_sonar_geometry = True
 
                 # === Per-frame: probabilities only ===
@@ -265,7 +262,11 @@ class FLS_PCL(Node):
                 all_probs = (raw_intensity[None, :] * self.beam_probs[:, None]).reshape(-1)
                 filtered_probs = all_probs[self._geom_mask]
 
-                self.points = np.full((self.pointcloud_msg.width, len(self.fields)), np.nan, dtype=np.float32)
+                num_points = self.indices.shape[0]
+                self.pointcloud_msg.width = num_points
+                self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
+
+                self.points = np.full((num_points, len(self.fields)), np.nan, dtype=np.float32)
                 # Position (fixed geometry)
                 self.points[:, 0:3] = self.cached_positions
                 # Probability (updated every frame)
@@ -322,14 +323,8 @@ class FLS_PCL(Node):
 
                 z = points[:, 2]
 
-                # Mask for points OUTSIDE depth range
-                invalid_mask = (z > self.max_depth) #| (z < self.min_depth)
-
-                # Set xyz to NaN
-                points[invalid_mask, 0:3] = np.nan
-
-                # Set intensity to nan
-                points[invalid_mask, 3] = np.nan
+                # Keep only points inside depth range
+                points = points[z <= self.max_depth]
 
                 points = [tuple(p) for p in points]
 
@@ -345,7 +340,6 @@ class FLS_PCL(Node):
                     # Transform back to sensor frame
                     self.pointcloud_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
 
-                    self.pointcloud_msg.is_dense = True
                     self.pub_pcl.publish(self.pointcloud_msg)
 
                 except TransformException as e:

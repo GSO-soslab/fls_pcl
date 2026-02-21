@@ -19,16 +19,22 @@
       probability_threshold: 0.9
 
       # Pointcloud topic to subscribe
-      sub_pointcloud_topic:  "/alpha_rise/fls/pointcloud/post"
+      sub_pointcloud_topic:  "/alpha_rise/fls/pointcloud/fan"
 
       # Second pointcloud source (MSIS fan)
       sub_pointcloud_topic_2: "/alpha_rise/msis/pointcloud/fan"
 
       pub_pointcloud_topic: "/occupancy_grid"
 
-      # Depth range in frame_id frame for OccupancyGrid filtering
-      depth_min: -100.0
-      depth_max:  -5.0
+      # Odometry topic used to track vehicle depth (Z position)
+      sub_odometry_topic: "/alpha_rise/odometry/filtered"
+
+      # Symmetric depth deviation (m) around vehicle Z for OccupancyGrid filtering.
+      # E.g. vehicle_z = -2m, depth_deviation = 1m → voxel Z range [-3m, -1m]
+      depth_deviation: 1.0
+
+      # Hard upper-bound on Z (m): voxels above this value are always discarded
+      z_cutoff: -1.0
 
       # OccupancyGrid output topic
       pub_occupancy_grid_topic: "/occupancy_grid_2d"
