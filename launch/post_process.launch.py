@@ -1,71 +1,25 @@
 import os
-import yaml
-import pathlib
 from launch import LaunchDescription
-import launch.actions
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch_xml.launch_description_sources import XMLLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution
-from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 from launch_ros.actions import Node
-from launch.substitutions import EnvironmentVariable
-from launch.actions import ExecuteProcess, DeclareLaunchArgument
-from launch.actions import IncludeLaunchDescription
-from launch.launch_description_sources import PythonLaunchDescriptionSource
 
 def generate_launch_description():
 
     ld = LaunchDescription()
 
-    # param_config = os.path.join(
-    #     get_package_share_directory('fls_pcl'),
-    #     'config',
-    #     'fls_params.yaml'
-    # )
-    
-    # node = Node(
-    #     package='fls_pcl',
-    #     executable='fls_pcl.py',
-    #     name='fls_pcl_node',
-    #     namespace="alpha_rise",
-    #     output='screen',
-    #     parameters=[param_config]
-    # )
-
-    fls_pcl = IncludeLaunchDescription(
+    msis_voxel_prob = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                get_package_share_directory('fls_pcl'),
+                get_package_share_directory('pcl_proc'),
                 'launch',
-                'fls_pcl.launch.py'
+                'msis_voxels.launch.py'
             )
         ),
         launch_arguments={
             'use_sim_time': 'true'
-        }.items()  
-    )
-
-    fls_intensity_plot_node = Node(
-        package='fls_pcl',
-        executable='plot_fls_beam.py',
-        name='fls_intensity_node',
-        namespace="alpha_rise",
-        output='screen',
-    )
-
-    fls_voxel = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(
-            os.path.join(
-                get_package_share_directory('fls_pcl'),
-                'launch',
-                'fls_voxel.launch.py'
-            )
-        ),
-        launch_arguments={
-            'use_sim_time': 'true'
-        }.items()  
+        }.items()
     )
 
     voxel_log_odds = IncludeLaunchDescription(
@@ -81,30 +35,27 @@ def generate_launch_description():
         }.items()
     )
 
-    msis_fov = Node(
-        package='pcl_proc',
-        executable='msis_voxels',
-        name='msis_viz',
-        namespace='alpha_rise',
-        output='screen',
-        parameters=[{
-            'use_sim_time': True
-        }],
+    fls_voxel_prob = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('fls_pcl'),
+                'launch',
+                'fls_pcl.launch.py'
+            )
+        ),
+        launch_arguments={
+            'use_sim_time': 'true'
+        }.items()
     )
 
-    msis_fan = Node(
-        package='pcl_proc',
-        executable='msis_prob_clouds.py',
-        name='msis_clouds',
-        namespace='alpha_rise',
-        output='screen',
-        parameters=[{
-            'use_sim_time': True
-        }],
-    )
+
     path = IncludeLaunchDescription(
         PythonLaunchDescriptionSource([os.path.join(get_package_share_directory('alpha_rise_bringup'), 'launch','bringup_path.launch.py')]),
-        launch_arguments = {'arg_robot_name': 'alpha_rise'}.items()  
+        launch_arguments={
+            'robot_name': 'alpha_rise',
+            'description_delay': '0.0',
+            'use_sim_time': 'true'
+        }.items()   
     )
 
     # Vehicle description
@@ -173,10 +124,10 @@ def generate_launch_description():
     
     #Whale Rock 12/5
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_29_36/rosbag2_2025_12_05-15_29_38'
-    bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_57_34/rosbag2_2025_12_05-15_57_35'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-15_57_34/rosbag2_2025_12_05-15_57_35'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_09_45/rosbag2_2025_12_05-16_09_47'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_26_08/rosbag2_2025_12_05-16_26_09'
-    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_43_41/rosbag2_2025_12_05-16_43_42'
+    bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_43_41/rosbag2_2025_12_05-16_43_42'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_54_58/rosbag2_2025_12_05-16_55_00'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_09_41/rosbag2_2025_12_05-17_09_42'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_22_29/rosbag2_2025_12_05-17_22_30'
@@ -193,15 +144,12 @@ def generate_launch_description():
         output='screen'
     )
 
-    ld.add_action(fls_pcl)
-    ld.add_action(fls_voxel)
+    ld.add_action(fls_voxel_prob)
+    ld.add_action(msis_voxel_prob)
     ld.add_action(voxel_log_odds)
-    # ld.add_action(fls_intensity_plot_node)
     ld.add_action(bag_play)
 
     ld.add_action(rviz)
-    ld.add_action(msis_fov)
-    ld.add_action(msis_fan)
     # ld.add_action(path)
 
 

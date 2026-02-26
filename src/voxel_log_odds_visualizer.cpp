@@ -357,7 +357,7 @@ private:
             ++iter_intensity;
         }
 
-        pc_pub_->publish(cloud_msg);
+        prob_cloud_pub_->publish(cloud_msg);
     }
 
     void publishOccupancyGrid() {
@@ -394,7 +394,7 @@ private:
             og.data[key.y * n_voxels_ + key.x] = static_cast<int8_t>(std::round(prob * 100.0)); 
         }
 
-        og_pub_->publish(og);
+        ogm_pub_->publish(og);
     }
 
     Eigen::Matrix4f transformToMatrix(const geometry_msgs::msg::TransformStamped &trans) {

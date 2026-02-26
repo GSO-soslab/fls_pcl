@@ -17,8 +17,8 @@ def generate_launch_description():
         'config',
         'fls_params.yaml'
     )
-    
-    node = Node(
+
+    fls_pcl_node = Node(
         package='fls_pcl',
         executable='fls_pcl.py',
         name='fls_pcl_node',
@@ -27,6 +27,16 @@ def generate_launch_description():
         parameters=[param_config]
     )
 
-    ld.add_action(node)
+    fls_voxel_node = Node(
+        package='fls_pcl',
+        executable='fls_voxels.py',
+        name='fls_voxel_node',
+        namespace="alpha_rise",
+        output='screen',
+        parameters=[param_config]
+    )
+
+    ld.add_action(fls_pcl_node)
+    ld.add_action(fls_voxel_node)
 
     return ld
