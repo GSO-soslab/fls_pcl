@@ -145,12 +145,12 @@ def generate_launch_description():
     )
 
     ld.add_action(fls_voxel_prob)
-    ld.add_action(msis_voxel_prob)
+    # ld.add_action(msis_voxel_prob)
     ld.add_action(voxel_log_odds)
     ld.add_action(bag_play)
 
     ld.add_action(rviz)
-    # ld.add_action(path)
+    ld.add_action(path)
 
 
     ld.add_action(description)

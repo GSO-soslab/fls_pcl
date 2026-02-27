@@ -1,8 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
-#include <visualization_msgs/msg/marker.hpp>
-#include <visualization_msgs/msg/marker_array.hpp>
 #include <tf2_ros/transform_listener.hpp>
 #include <tf2_ros/buffer.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
@@ -10,7 +8,6 @@
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <unordered_map>
-#include <tuple>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -38,11 +35,35 @@ class VoxelLogOddsVisualizer : public rclcpp::Node {
 public:
     //Constructor
     VoxelLogOddsVisualizer() : Node("voxel_logodds_visualizer") {
+        // --- Frames ---
+        this->declare_parameter<std::string>("frame_id", "map");
+        this->get_parameter("frame_id", frame_id_);
+
+        this->declare_parameter<std::string>("robot_frame_id", "base_link");
+        this->get_parameter("robot_frame_id", robot_frame_id_);
+
+        // --- Topics ---
+        this->declare_parameter<std::string>("sub_pointcloud_topic", "/pointcloud");
+        this->get_parameter("sub_pointcloud_topic", sub_pointcloud_topic_);
+
+        this->declare_parameter<std::string>("sub_pointcloud_topic_2", "");
+        this->get_parameter("sub_pointcloud_topic_2", sub_pointcloud_topic_2_);
+
+        this->declare_parameter<std::string>("sub_odometry_topic", "/odometry");
+        this->get_parameter("sub_odometry_topic", sub_odometry_topic_);
+
+        this->declare_parameter<std::string>("pub_voxel_topic", "/occupancy_grid");
+        this->get_parameter("pub_voxel_topic", pub_voxel_topic_);
+
+        this->declare_parameter<std::string>("pub_global_costmap_topic", "/global_costmap_2d");
+        this->get_parameter("pub_global_costmap_topic", pub_global_costmap_topic_);
+
+        this->declare_parameter<std::string>("pub_local_costmap_topic", "/local_costmap_2d");
+        this->get_parameter("pub_local_costmap_topic", pub_local_costmap_topic_);
+
+        // --- Voxel map ---
         this->declare_parameter<double>("voxel_resolution", 1.0);
         this->get_parameter("voxel_resolution", voxel_res_);
-
-        this->declare_parameter<double>("grid_size", 100.0);
-        this->get_parameter("grid_size", grid_size_);
 
         this->declare_parameter<double>("logodds_min", -5.0);
         this->get_parameter("logodds_min", logodds_min_);
@@ -50,30 +71,15 @@ public:
         this->declare_parameter<double>("logodds_max", 5.0);
         this->get_parameter("logodds_max", logodds_max_);
 
-        this->declare_parameter<std::string>("frame_id", "map");
-        this->get_parameter("frame_id", frame_id_);
-
         this->declare_parameter<double>("probability_threshold", 0.1);
         this->get_parameter("probability_threshold", prob_threshold_);
 
-        this->declare_parameter<std::string>("sub_pointcloud_topic", "/pointcloud");
-        this->get_parameter("sub_pointcloud_topic", sub_pointcloud_topic_);
+        // --- Costmaps ---
+        this->declare_parameter<double>("global_costmap_dimension", 400.0);
+        this->get_parameter("global_costmap_dimension", global_costmap_dim_);
 
-        this->declare_parameter<std::string>("sub_pointcloud_topic_2", "");
-        this->get_parameter("sub_pointcloud_topic_2", sub_pointcloud_topic_2_);
-
-        // Changed parameter name to reflect PointCloud2 output
-        this->declare_parameter<std::string>("pub_pointcloud_topic", "/occupancy_grid");
-        this->get_parameter("pub_pointcloud_topic", pub_pointcloud_topic_);
-
-        this->declare_parameter<std::string>("output_pcd_file", "occupancy_grid.pcd");
-        this->get_parameter("output_pcd_file", output_pcd_file_);
-
-        this->declare_parameter<bool>("save_pcd", false);
-        this->get_parameter("save_pcd", save_pcd_);
-
-        this->declare_parameter<std::string>("sub_odometry_topic", "/odometry");
-        this->get_parameter("sub_odometry_topic", sub_odometry_topic_);
+        this->declare_parameter<double>("local_costmap_dimension", 100.0);
+        this->get_parameter("local_costmap_dimension", local_costmap_dim_);
 
         this->declare_parameter<double>("depth_deviation", 1.0);
         this->get_parameter("depth_deviation", depth_deviation_);
@@ -81,11 +87,15 @@ public:
         this->declare_parameter<double>("z_cutoff", -1.0);
         this->get_parameter("z_cutoff", z_cutoff_);
 
-        this->declare_parameter<std::string>("pub_occupancy_grid_topic", "/occupancy_grid_2d");
-        this->get_parameter("pub_occupancy_grid_topic", pub_og_topic_);
+        // --- PCD export ---
+        this->declare_parameter<bool>("save_pcd", false);
+        this->get_parameter("save_pcd", save_pcd_);
 
-        n_voxels_ = static_cast<int>(std::ceil(grid_size_ / voxel_res_));
-        half_grid_ = grid_size_ / 2.0;
+        this->declare_parameter<std::string>("output_pcd_file", "occupancy_grid.pcd");
+        this->get_parameter("output_pcd_file", output_pcd_file_);
+
+        n_voxels_ = static_cast<int>(std::ceil(global_costmap_dim_ / voxel_res_));
+        half_grid_ = global_costmap_dim_ / 2.0;
 
         // ROS subscriptions and publishers
         pc_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
@@ -103,19 +113,19 @@ public:
             std::bind(&VoxelLogOddsVisualizer::odometryCallback, this, std::placeholders::_1)
         );
 
-        // Changed to PointCloud2 publisher instead of MarkerArray
         prob_cloud_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
-           pub_pointcloud_topic_, 10
+           pub_voxel_topic_, 10
         );
 
-        ogm_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(pub_og_topic_, 10);
+        global_ogm_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(pub_global_costmap_topic_, 10);
+        local_ogm_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(pub_local_costmap_topic_, 10);
 
         // TF listener
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
         RCLCPP_INFO(this->get_logger(), "VoxelLogOddsVisualizer initialized. Grid size: %.2fm, resolution: %.2fm",
-                    grid_size_, voxel_res_);
+                    global_costmap_dim_, voxel_res_);
     }
 
     //Destructor
@@ -127,29 +137,42 @@ public:
     }
 
 private:
-    std::string output_pcd_file_;
-    double voxel_res_, grid_size_, logodds_min_, logodds_max_;
-    double half_grid_;
+    // --- Frames ---
     std::string frame_id_;
+    std::string robot_frame_id_;
+
+    // --- Topics ---
     std::string sub_pointcloud_topic_;
     std::string sub_pointcloud_topic_2_;
-    std::string pub_pointcloud_topic_;
-    double prob_threshold_;
-    int n_voxels_;
-    bool save_pcd_;
-
-    std::string pub_og_topic_;
     std::string sub_odometry_topic_;
+    std::string pub_voxel_topic_;
+    std::string pub_global_costmap_topic_;
+    std::string pub_local_costmap_topic_;
+
+    // --- Voxel map ---
+    double voxel_res_, logodds_min_, logodds_max_;
+    double prob_threshold_;
+    double half_grid_;
+    int n_voxels_;
+    std::unordered_map<VoxelKey, double, KeyHash> logodds_grid_;
+
+    // --- Costmaps ---
+    double global_costmap_dim_;   // meters
+    double local_costmap_dim_;    // meters
     double depth_deviation_;
     double z_cutoff_;
     double vehicle_z_{0.0};
-    std::unordered_map<VoxelKey, double, KeyHash> logodds_grid_;
+
+    // --- PCD export ---
+    bool save_pcd_;
+    std::string output_pcd_file_;
 
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_;
     rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_2_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr prob_cloud_pub_;
-    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr ogm_pub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr global_ogm_pub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr local_ogm_pub_;
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -289,11 +312,12 @@ private:
 
         }
 
-        publishPointCloud();
-        publishOccupancyGrid();
+        publishVoxelMap();
+        publishGlobalCostmap();
+        publishLocalCostmap();
     }
 
-    void publishPointCloud() {
+    void publishVoxelMap() {
         // Count valid voxels
         size_t num_voxels = 0;
         for (const auto& kv : logodds_grid_) {
@@ -360,41 +384,106 @@ private:
         prob_cloud_pub_->publish(cloud_msg);
     }
 
-    void publishOccupancyGrid() {
+    // Helper: compute depth band bounds
+    std::pair<double,double> depthBand() const {
+        return {vehicle_z_ - depth_deviation_,
+                std::min(vehicle_z_ + depth_deviation_, z_cutoff_)};
+    }
+
+    // Helper: check z filtering for a voxel
+    bool voxelPassesDepthFilter(const VoxelKey& key, double depth_lo, double depth_hi) const {
+        float z_world = key.z * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+        return z_world <= z_cutoff_ && z_world >= depth_lo && z_world <= depth_hi;
+    }
+
+    void publishGlobalCostmap() {
+        const int cells = static_cast<int>(std::ceil(global_costmap_dim_ / voxel_res_));
+        const double half = global_costmap_dim_ / 2.0;
+
         nav_msgs::msg::OccupancyGrid og;
         og.header.stamp = this->get_clock()->now();
         og.header.frame_id = frame_id_;
         og.info.resolution = static_cast<float>(voxel_res_);
-        og.info.width  = n_voxels_;
-        og.info.height = n_voxels_;
-        og.info.origin.position.x = -half_grid_;
-        og.info.origin.position.y = -half_grid_;
+        og.info.width  = cells;
+        og.info.height = cells;
+        og.info.origin.position.x = -half;
+        og.info.origin.position.y = -half;
         og.info.origin.orientation.w = 1.0;
-        og.data.assign(n_voxels_ * n_voxels_, -1);
+        og.data.assign(cells * cells, -1);
 
-        // Dynamic depth band centred on vehicle Z, capped by hard cutoff
-        double depth_lo = vehicle_z_ - depth_deviation_;
-        double depth_hi = std::min(vehicle_z_ + depth_deviation_, z_cutoff_);
+        auto [depth_lo, depth_hi] = depthBand();
 
-        // Project 3D log-odds grid → 2D: any voxel within depth band above threshold sets the cell
         for (const auto& kv : logodds_grid_) {
             const VoxelKey& key = kv.first;
 
             double prob = to_prob(kv.second);
             if (prob < prob_threshold_) continue;
+            if (!voxelPassesDepthFilter(key, depth_lo, depth_hi)) continue;
 
-            float z_world = key.z * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
-            // Hard cutoff: discard anything above z_cutoff_ (default -1.0 m)
-            if (z_world > z_cutoff_) continue;
-            // Depth filtering relative to current vehicle depth
-            if (z_world < depth_lo || z_world > depth_hi) continue;
+            float x_world = key.x * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+            float y_world = key.y * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
 
-            if (key.x < 0 || key.y < 0 || key.x >= n_voxels_ || key.y >= n_voxels_) continue;
-            // y = row, x = column
-            og.data[key.y * n_voxels_ + key.x] = static_cast<int8_t>(std::round(prob * 100.0)); 
+            int gx = static_cast<int>(std::floor((x_world + half) / voxel_res_));
+            int gy = static_cast<int>(std::floor((y_world + half) / voxel_res_));
+            if (gx < 0 || gy < 0 || gx >= cells || gy >= cells) continue;
+
+            og.data[gy * cells + gx] = static_cast<int8_t>(std::round(prob * 100.0));
         }
 
-        ogm_pub_->publish(og);
+        global_ogm_pub_->publish(og);
+    }
+
+    void publishLocalCostmap() {
+        const int cells = static_cast<int>(std::ceil(local_costmap_dim_ / voxel_res_));
+        const double half = local_costmap_dim_ / 2.0;
+
+        // Look up robot position in the voxel-map frame
+        geometry_msgs::msg::TransformStamped robot_trans;
+        try {
+            robot_trans = tf_buffer_->lookupTransform(
+                frame_id_, robot_frame_id_, tf2::TimePointZero, 100ms
+            );
+        } catch (tf2::TransformException &ex) {
+            RCLCPP_WARN(this->get_logger(), "Local costmap TF lookup failed: %s", ex.what());
+            return;
+        }
+
+        const double robot_x = robot_trans.transform.translation.x;
+        const double robot_y = robot_trans.transform.translation.y;
+        const double origin_x = robot_x - half;
+        const double origin_y = robot_y - half;
+
+        nav_msgs::msg::OccupancyGrid og;
+        og.header.stamp = this->get_clock()->now();
+        og.header.frame_id = frame_id_;
+        og.info.resolution = static_cast<float>(voxel_res_);
+        og.info.width  = cells;
+        og.info.height = cells;
+        og.info.origin.position.x = origin_x;
+        og.info.origin.position.y = origin_y;
+        og.info.origin.orientation.w = 1.0;
+        og.data.assign(cells * cells, -1);
+
+        auto [depth_lo, depth_hi] = depthBand();
+
+        for (const auto& kv : logodds_grid_) {
+            const VoxelKey& key = kv.first;
+
+            double prob = to_prob(kv.second);
+            if (prob < prob_threshold_) continue;
+            if (!voxelPassesDepthFilter(key, depth_lo, depth_hi)) continue;
+
+            float x_world = key.x * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+            float y_world = key.y * voxel_res_ - half_grid_ + voxel_res_ / 2.0f;
+
+            int lx = static_cast<int>(std::floor((x_world - origin_x) / voxel_res_));
+            int ly = static_cast<int>(std::floor((y_world - origin_y) / voxel_res_));
+            if (lx < 0 || ly < 0 || lx >= cells || ly >= cells) continue;
+
+            og.data[ly * cells + lx] = static_cast<int8_t>(std::round(prob * 100.0));
+        }
+
+        local_ogm_pub_->publish(og);
     }
 
     Eigen::Matrix4f transformToMatrix(const geometry_msgs::msg::TransformStamped &trans) {
