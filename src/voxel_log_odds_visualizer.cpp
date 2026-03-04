@@ -450,8 +450,9 @@ private:
 
         const double robot_x = robot_trans.transform.translation.x;
         const double robot_y = robot_trans.transform.translation.y;
-        const double origin_x = robot_x - half;
-        const double origin_y = robot_y - half;
+        // Round to 1 precision point.
+        const double origin_x = std::round((robot_x - half) * 10.0) / 10.0;
+        const double origin_y = std::round((robot_y - half) * 10.0) / 10.0;
 
         nav_msgs::msg::OccupancyGrid og;
         og.header.stamp = this->get_clock()->now();
