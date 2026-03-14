@@ -147,8 +147,8 @@ class FLS_PCL(Node):
         else:
             self.max_range = 40.0
             self.horizontal_beamwidth = 70
-            bearings = np.loadtxt('bearings.txt')
-            self.bearings = np.array([np.radians(bearing * 0.01) for bearing in bearings]).squeeze()
+            self.bearings = None  # will be set on first image using actual image width
+            self.receive_ping = True
 
         # === Sub to Marker topic for Voxels ===
         self.sub_marker = self.create_subscription(Marker, self.get_parameter('marker_sub_topic').value, self.marker_CB, 10)
@@ -379,51 +379,55 @@ class FLS_PCL(Node):
 
         return np.clip(img, 0, 255).astype(src_dtype)
 
-    def image_preprocess(self, current):
-        rows, columns = current.shape
-        self.n_bins, self.n_beams = rows, columns
+    def image_preprocess(self, current):    
+        if self.sim:
+            # current = cv2.rotate(current, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            rows, columns = current.shape
+            self.n_bins, self.n_beams = rows, columns
 
-        # Lee filter. Better for multiplicative noise.
-        # current = self.lee_filter(current, kernel_size=5)
+            return current
+        else:
+            # Lee filter. Better for multiplicative noise.
+            # current = self.lee_filter(current, kernel_size=5)
 
-        # Zero out the middle 10 columns
-        h, w = current.shape
-        mid = w // 2
-        # current[:, mid - 15 : mid] = 0
+            # Zero out the middle 10 columns
+            h, w = current.shape
+            mid = w // 2
+            # current[:, mid - 15 : mid] = 0
 
-        # Parameters
-        top_width = 20
-        bottom_width = 15
-        bottom_offset = 20  # pixels left of center at bottom
+            # Parameters
+            top_width = 20
+            bottom_width = 15
+            bottom_offset = 20  # pixels left of center at bottom
 
-        # Row coordinates [0 .. h-1]
-        y = np.arange(h, dtype=np.float32)
-        frac = y / (h - 1)
+            # Row coordinates [0 .. h-1]
+            y = np.arange(h, dtype=np.float32)
+            frac = y / (h - 1)
 
-        # Width tapers from 20 → 1
-        widths = np.round(top_width + frac * (bottom_width - top_width)).astype(int)
+            # Width tapers from 20 → 1
+            widths = np.round(top_width + frac * (bottom_width - top_width)).astype(int)
 
-        # Left boundary moves so the wedge ends at (mid - bottom_offset)
-        top_left = mid - top_width
-        bottom_left = mid - bottom_offset
+            # Left boundary moves so the wedge ends at (mid - bottom_offset)
+            top_left = mid - top_width
+            bottom_left = mid - bottom_offset
 
-        left_bounds = np.round(
-            top_left + frac * (bottom_left - top_left)
-        ).astype(int)
+            left_bounds = np.round(
+                top_left + frac * (bottom_left - top_left)
+            ).astype(int)
 
-        # Column coordinates
-        x = np.arange(w)
+            # Column coordinates
+            x = np.arange(w)
 
-        # Build mask: True where pixels should be zeroed
-        mask = (x[None, :] >= left_bounds[:, None]) & \
-            (x[None, :] < (left_bounds + widths)[:, None])
+            # Build mask: True where pixels should be zeroed
+            mask = (x[None, :] >= left_bounds[:, None]) & \
+                (x[None, :] < (left_bounds + widths)[:, None])
 
-        # Apply mask
-        current[mask] = 0
+            # Apply mask
+            current[mask] = 0
 
-        # Anisotropic diffusion — smooths homogeneous regions, preserves edges
-        current = self.anisotropic_diffusion(current, niter=5, kappa=30, gamma=0.1)
-        return current
+            # Anisotropic diffusion — smooths homogeneous regions, preserves edges
+            current = self.anisotropic_diffusion(current, niter=5, kappa=30, gamma=0.1)
+            return current
         
     def create_voxel_corresponding_points(self, voxel_points:np.ndarray, geometry_points:np.ndarray, method, intensities:np.ndarray=None):
         '''
@@ -583,6 +587,9 @@ class FLS_PCL(Node):
 
         # Convert to sensor frame (x, y) — cache cos/sin since geometry is fixed
         if not hasattr(self, '_cached_sensor_xy'):
+            if self.bearings is None or len(self.bearings) != image.shape[1]:
+                raw = np.linspace(-3500, 3500, image.shape[1])
+                self.bearings = np.array([np.radians(b * 0.01) for b in raw]).squeeze()
             theta_values = self.bearings[cols_flat]
             #40m / 517 beams = 0.07m/beams
             meters_per_beam = self.max_range / self.n_bins
@@ -630,7 +637,7 @@ class FLS_PCL(Node):
             # Mask for linear interpolation range
             mid_mask = (intensities > self.lower_bound_intensity) & (intensities < self.upper_bound_intensity)
 
-            # Linear interpolation between 0.1 and 0.9
+            # Linear interpolation between 0.2 and 0.9
             probabilities[mid_mask] = self.min_prob + (
                 (intensities[mid_mask] - self.lower_bound_intensity) /
                 (self.upper_bound_intensity - self.lower_bound_intensity)
