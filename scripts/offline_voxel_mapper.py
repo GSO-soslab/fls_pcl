@@ -35,9 +35,13 @@ _YAML_PATH  = os.path.join(_SCRIPT_DIR, '..', 'config', 'offline_mapper.yaml')
 with open(_YAML_PATH) as _f:
     _cfg = yaml.safe_load(_f)['offline_mapper']
 
-BAG_PATH       = _cfg['bag_path']
-OUTPUT_PCD     = _cfg['output_pcd']
-SAVE_NPZ       = bool(_cfg.get('save_npz', False))
+BAG_PATH          = _cfg['bag_path']
+OUTPUT_PCD        = _cfg['output_pcd']
+SAVE_NPZ          = bool(_cfg.get('save_npz', False))
+
+SIM               = bool(_cfg.get('sim', False))
+IMAGE_TOPIC_FILTER = str(_cfg.get('image_topic_filter', 'raw_image'))
+FLS_CHILD_LINK    = str(_cfg.get('fls_child_link', 'fls_link'))
 
 VOXEL_RES      = float(_cfg['voxel_resolution'])
 LOGODDS_MIN    = float(_cfg['logodds_min'])
@@ -131,7 +135,7 @@ def _anisotropic_diffusion(img, niter=5, kappa=30, gamma=0.1):
 
 
 def image_preprocess(img):
-    """Wedge mask + anisotropic diffusion (replicates fls_pcl.py)."""
+    """Wedge mask + anisotropic diffusion (replicates fls_pcl.py real-hardware branch)."""
     current = img.copy()
     h, w    = current.shape
     mid     = w // 2
@@ -149,6 +153,11 @@ def image_preprocess(img):
     current[mask] = 0
 
     return _anisotropic_diffusion(current, niter=5, kappa=30, gamma=0.1)
+
+
+def image_preprocess_sim(img):
+    """Sim branch (replicates fls_pcl.py sim branch): return image as-is."""
+    return img.copy()
 
 
 # ── PCD writer (matching voxel_log_odds_visualizer.cpp savePCD) ───────────────
@@ -199,7 +208,8 @@ def main():
     print("=== Offline Voxel Mapper ===")
     print(f"Bag:        {BAG_PATH}")
     print(f"Output:     {OUTPUT_PCD}")
-    print(f"Resolution: {VOXEL_RES} m\n")
+    print(f"Resolution: {VOXEL_RES} m")
+    print(f"Sim mode:   {SIM}\n")
 
     # ── Static transforms from URDF ───────────────────────────────────────────
     from ament_index_python.packages import get_package_share_directory
@@ -213,10 +223,10 @@ def main():
         print(f"  {p} → {c}")
 
     T_base_fls = fixed_joints.get(
-        ('alpha_rise/base_link', 'alpha_rise/fls_link')
+        ('alpha_rise/base_link', f'alpha_rise/{FLS_CHILD_LINK}')
     )
     if T_base_fls is None:
-        print("WARNING: fls_link joint not found in URDF — using hardcoded fallback")
+        print(f"WARNING: {FLS_CHILD_LINK} joint not found in URDF — using hardcoded fallback")
         T_base_fls = rpy_to_matrix([-0.26, -0.13, 0.0], [1.57, 0.0, -1.57])
 
     # ── Beam pattern: elevation angles + sinc DI weights ─────────────────────
@@ -265,8 +275,10 @@ def main():
     ImageMsg  = get_message('sensor_msgs/msg/Image')
 
     # ── Processing state ──────────────────────────────────────────────────────
-    bearings     = None      # (n_beams,) float64 radians — set from first Ping
-    max_range_m  = None      # float
+    # Sim mode: bearings are derived from the first image width; max_range set from config.
+    # Real mode: both are read from the first Ping message in the bag.
+    bearings     = None                          # (n_beams,) float64 radians
+    max_range_m  = RANGE_MAX if SIM else None    # float
 
     # Dynamic TF: odom → base_link, sorted chronologically by bag read order
     tf_times_ns  = []        # list[int]
@@ -300,8 +312,8 @@ def main():
             # Static transforms already handled from URDF; ignore bag copies
             continue
 
-        # ── Ping — bearings + max range ───────────────────────────────────────
-        if 'ping' in topic and bearings is None:
+        # ── Ping — bearings + max range (real hardware only) ─────────────────
+        if not SIM and 'ping' in topic and bearings is None:
             msg         = deserialize_message(data, PingMsg)
             bearings    = np.radians(np.array(msg.bearings, dtype=np.float64) * 0.01)
             max_range_m = float(msg.range)
@@ -309,17 +321,27 @@ def main():
             continue
 
         # ── Image — main processing ───────────────────────────────────────────
-        if 'raw_image' not in topic:
+        if IMAGE_TOPIC_FILTER not in topic:
             continue
-        if bearings is None:
-            continue   # wait for first ping
+        if not SIM and bearings is None:
+            continue   # real hardware: wait for first ping
 
         msg    = deserialize_message(data, ImageMsg)
-        n_bins = msg.height   # range bins (rows)
-        n_beams_img = msg.width    # azimuth beams (cols)
+        n_bins = msg.height       # range bins (rows)
+        n_beams_img = msg.width   # azimuth beams (cols)
+
+        # Sim: derive bearings from image width on first image (mirrors fls_pcl.py sim branch)
+        if SIM and bearings is None:
+            raw      = np.linspace(-3500, 3500, n_beams_img)
+            bearings = np.radians(np.array(raw, dtype=np.float64) * 0.01)
+            print(f"Sim: derived {len(bearings)} bearings from image width, "
+                  f"max_range={max_range_m:.1f} m")
 
         img = np.frombuffer(bytes(msg.data), dtype=np.uint8).reshape(n_bins, n_beams_img)
-        img = image_preprocess(img)
+        if SIM:
+            img = image_preprocess_sim(img)
+        else:
+            img = image_preprocess(img)
 
         # ── Pixel → sensor-frame (x, y): cache for fixed image geometry ───────
         cache_key = (n_bins, n_beams_img, len(bearings))

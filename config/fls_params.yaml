@@ -1,22 +1,28 @@
 /alpha_rise/fls_pcl_node:
   ros__parameters:
+    world_frame_id: 'alpha_rise/world'
     sim: False
+    # # Real
+    sensor_frame_id: 'alpha_rise/fls_link'
+    image_sub_topic: '/alpha_rise/oculus/raw_image'
+    ping_sub_topic: '/alpha_rise/oculus/ping'
+
+    # # Stonefish
+    # sensor_frame_id: 'alpha_rise/fls_link_sf'
+    # image_sub_topic: '/alpha_rise/stonefish/fls/data/image'
+
+    marker_sub_topic: '/alpha_rise/fls/geometry'
+    pointcloud_pub_topic: '/alpha_rise/fls/pointcloud'
     max_depth: -1.0 #World Frame (ENU)
     min_depth: -15.0 #World Frame (ENU)
-    threshold_intensity: 70 #0-255 pixel values
+    threshold_intensity: 30 #0-255 pixel values
     threshold_min_range: 5.0 #m
     vertical_beamwidth: 12.0 # degrees
-    frame_id: 'alpha_rise/fls_link'
-    ping_sub_topic: '/alpha_rise/oculus/ping'
-    image_sub_topic: '/alpha_rise/oculus/raw_image'
-    marker_sub_topic: '/alpha_rise/fls/geometry'
-    pointcloud_pub_topic: '/alpha_rise/fls/pointcloud/fan'
-    filter_mode: 'probabilistic_intensity' # threshold_intensity/max_intensity/probabilistic_intensity
 
     probabilistic_intensity:
       intensity:
-        lower_bound_intensity: 22
-        upper_bound_intensity: 50
+        lower_bound_intensity: 32
+        upper_bound_intensity: 100
         min_probability: 0.2
         max_probability: 0.9
 
@@ -25,16 +31,8 @@
         sound_speed: 1500         # m/s
         aperture_size: 0.0067     # 0.0067 m
 
-    ## Stonefish
-    # frame_id: 'alpha_rise/fls_link_sf'
-    # image_sub_topic: '/alpha_rise/stonefish/fls/data/image'
-    # pointcloud_sub_topic: '/alpha_rise/fls/pointcloud'
-
-    # process every (int) beam into pointcloud. (1 - 512)
-    beam_skip_count: 1
-
     save_as_pcd: False
-    pcd_filename: "fls_max_intensity.pcd"
+    pcd_filename: "ice1_sampled.pcd"
 
 /alpha_rise/fls_voxel_node:
   ros__parameters:

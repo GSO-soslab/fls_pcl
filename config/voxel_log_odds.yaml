@@ -10,7 +10,7 @@
 
       # --- Topics ---
       # Pointcloud topics to subscribe
-      sub_pointcloud_topic: "/alpha_rise/fls/pointcloud/fan"
+      sub_pointcloud_topic: "/alpha_rise/fls/pointcloud/probability"
       sub_pointcloud_topic_2: "/alpha_rise/msis/pointcloud/fan"
 
       # Odometry topic used to track vehicle depth (Z position)
@@ -32,7 +32,7 @@
       logodds_max: 20.0
 
       # Only voxels above this probability are visualized
-      probability_threshold: 0.9
+      probability_threshold: 0.999
 
       # --- Costmaps ---
       # Global costmap side length (m); cell count = ceil(dimension / voxel_resolution)

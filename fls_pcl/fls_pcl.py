@@ -47,14 +47,14 @@ class FLS_PCL(Node):
         self.declare_parameter('threshold_min_range',Parameter.Type.DOUBLE)
         self.threshold_min_range = self.get_parameter('threshold_min_range').value
 
-        self.declare_parameter('beam_skip_count',Parameter.Type.INTEGER)
-        self.beam_skip_count = self.get_parameter('beam_skip_count').value
-
         self.declare_parameter('vertical_beamwidth', Parameter.Type.DOUBLE)
         self.vertical_beamwidth = self.get_parameter('vertical_beamwidth').value
 
-        self.declare_parameter('frame_id',Parameter.Type.STRING)
-        self.frame_id = self.get_parameter('frame_id').value
+        self.declare_parameter('sensor_frame_id', Parameter.Type.STRING)
+        self.frame_id = self.get_parameter('sensor_frame_id').value
+
+        self.declare_parameter('world_frame_id', Parameter.Type.STRING)
+        self.world_frame_id = self.get_parameter('world_frame_id').value
 
         self.declare_parameter('ping_sub_topic',Parameter.Type.STRING)
         self.declare_parameter('marker_sub_topic',Parameter.Type.STRING)
@@ -69,58 +69,54 @@ class FLS_PCL(Node):
         self.declare_parameter('pcd_filename', Parameter.Type.STRING)
         self.pcd_filename = self.get_parameter('pcd_filename').value
 
-        self.declare_parameter('filter_mode', Parameter.Type.STRING)
-        self.filter_mode = self.get_parameter('filter_mode').value
+        self.declare_parameter('probabilistic_intensity.intensity.lower_bound_intensity', Parameter.Type.INTEGER)
+        self.lower_bound_intensity = self.get_parameter('probabilistic_intensity.intensity.lower_bound_intensity').value
 
-        if self.filter_mode == "probabilistic_intensity":
-            self.declare_parameter('probabilistic_intensity.intensity.lower_bound_intensity', Parameter.Type.INTEGER)
-            self.lower_bound_intensity = self.get_parameter('probabilistic_intensity.intensity.lower_bound_intensity').value
+        self.declare_parameter('probabilistic_intensity.intensity.upper_bound_intensity', Parameter.Type.INTEGER)
+        self.upper_bound_intensity = self.get_parameter('probabilistic_intensity.intensity.upper_bound_intensity').value
 
-            self.declare_parameter('probabilistic_intensity.intensity.upper_bound_intensity', Parameter.Type.INTEGER)
-            self.upper_bound_intensity = self.get_parameter('probabilistic_intensity.intensity.upper_bound_intensity').value
+        self.declare_parameter('probabilistic_intensity.intensity.min_probability', Parameter.Type.DOUBLE)
+        self.min_prob = self.get_parameter('probabilistic_intensity.intensity.min_probability').value
 
-            self.declare_parameter('probabilistic_intensity.intensity.min_probability', Parameter.Type.DOUBLE)
-            self.min_prob = self.get_parameter('probabilistic_intensity.intensity.min_probability').value
+        self.declare_parameter('probabilistic_intensity.intensity.max_probability', Parameter.Type.DOUBLE)
+        self.max_prob = self.get_parameter('probabilistic_intensity.intensity.max_probability').value
 
-            self.declare_parameter('probabilistic_intensity.intensity.max_probability', Parameter.Type.DOUBLE)
-            self.max_prob = self.get_parameter('probabilistic_intensity.intensity.max_probability').value
+        self.declare_parameter('probabilistic_intensity.sonar_params.frequency', Parameter.Type.DOUBLE)
+        self.frequency = self.get_parameter('probabilistic_intensity.sonar_params.frequency').value
 
-            self.declare_parameter('probabilistic_intensity.sonar_params.frequency', Parameter.Type.DOUBLE)
-            self.frequency = self.get_parameter('probabilistic_intensity.sonar_params.frequency').value
+        self.declare_parameter('probabilistic_intensity.sonar_params.sound_speed', Parameter.Type.INTEGER)
+        self.sound_speed = self.get_parameter('probabilistic_intensity.sonar_params.sound_speed').value
 
-            self.declare_parameter('probabilistic_intensity.sonar_params.sound_speed', Parameter.Type.INTEGER)
-            self.sound_speed = self.get_parameter('probabilistic_intensity.sonar_params.sound_speed').value
+        self.declare_parameter('probabilistic_intensity.sonar_params.aperture_size', Parameter.Type.DOUBLE)
+        self.aperture_size = self.get_parameter('probabilistic_intensity.sonar_params.aperture_size').value
 
-            self.declare_parameter('probabilistic_intensity.sonar_params.aperture_size', Parameter.Type.DOUBLE)
-            self.aperture_size = self.get_parameter('probabilistic_intensity.sonar_params.aperture_size').value
+        # === Sonar Physical Parameters ===
+        wavelength = self.sound_speed / self.frequency
+        k = 2 * np.pi / wavelength
 
-            # === Sonar Physical Parameters ===
-            wavelength = self.sound_speed / self.frequency
-            k = 2 * np.pi / wavelength
+        # === Elevation angles ===
+        elevation_angles = np.arange(
+            -self.vertical_beamwidth / 2,
+            self.vertical_beamwidth / 2 + 1,
+            1,
+            dtype=np.float32
+        )
 
-            # === Elevation angles ===
-            elevation_angles = np.arange(
-                -self.vertical_beamwidth / 2,
-                self.vertical_beamwidth / 2 + 1,
-                1,
-                dtype=np.float32
-            )
+        angles_rad = np.deg2rad(elevation_angles)
 
-            angles_rad = np.deg2rad(elevation_angles)
+        # === Precompute trig ===
+        self.cos_a = np.cos(angles_rad)[:, None]
+        self.sin_a = np.sin(angles_rad)[:, None]
 
-            # === Precompute trig ===
-            self.cos_a = np.cos(angles_rad)[:, None]
-            self.sin_a = np.sin(angles_rad)[:, None]
+        # === Physical beam pattern (sinc) using SONAR beam directivity pattern ===
+        temp = (k * self.aperture_size / 2) * np.sin(angles_rad)
+        DI = np.ones_like(temp, dtype=np.float32)
+        non_zero_mask = np.abs(temp) > 1e-10
 
-            # === Physical beam pattern (sinc) using SONAR beam directivity pattern ===
-            temp = (k * self.aperture_size / 2) * np.sin(angles_rad)
-            DI = np.ones_like(temp, dtype=np.float32)
-            non_zero_mask = np.abs(temp) > 1e-10
-            
-            # === DI = sinc(kh/2*sin(elevation_angle)) ===
-            # === round to 2 precision ===
-            DI[non_zero_mask] = np.sin(temp[non_zero_mask]) / temp[non_zero_mask]
-            self.beam_probs = np.array([round(theta_prob, 2) for theta_prob in DI], dtype=np.float32)
+        # === DI = sinc(kh/2*sin(elevation_angle)) ===
+        # === round to 2 precision ===
+        DI[non_zero_mask] = np.sin(temp[non_zero_mask]) / temp[non_zero_mask]
+        self.beam_probs = np.array([round(theta_prob, 2) for theta_prob in DI], dtype=np.float32)
 
         # === CV bridge ===
         self.bridge = CvBridge()
@@ -134,7 +130,8 @@ class FLS_PCL(Node):
         self.bool_create_sonar_geometry = False
 
         # === Publishers ===
-        self.pub_pcl = self.create_publisher(PointCloud2, pub_topic, 10)
+        self.pub_pcl      = self.create_publisher(PointCloud2, pub_topic, 10)
+        self.pub_pcl_prob = self.create_publisher(PointCloud2, pub_topic + '/probability', 10)
         self.pub_fls_median_image = self.create_publisher(Image, pub_topic+'/image/filtered', 10)
 
         # === Subscribers === 
@@ -215,7 +212,8 @@ class FLS_PCL(Node):
     def image_CB(self, msg:Image):
         '''
         Callback for Image msg.<br>
-        Uses the polar image from the SONAR to extract intensities and project it as probability clouds
+        Uses the polar image from the SONAR to extract intensities and project it as probability clouds.
+        Publishes two clouds simultaneously: max_intensity (fan) and probabilistic_intensity.
         '''
         # Only start when both Ping & Marker msgs are in memory.
         if self.receive_ping and self.receive_marker:
@@ -224,128 +222,128 @@ class FLS_PCL(Node):
             current = self.image_preprocess(current)
             self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
 
-            # === Convert all valid pixels to sensor frame coordinates ===
-            edge_list, sensor_frame = self.extract_points_in_sensor_frame(current, mode=self.filter_mode)
-            
-            sensor_x = sensor_frame[:, 0].astype(np.float32)
-            sensor_y = sensor_frame[:, 1].astype(np.float32)
-            raw_intensity = sensor_frame[:, 2].astype(np.float32)
-            
-            if self.filter_mode == 'probabilistic_intensity':
+            # === Convert all valid pixels to sensor frame coordinates (both modes) ===
+            mx_edge, mx_frame, pr_edge, pr_frame = self.extract_points_in_sensor_frame(current)
 
-                if not self.bool_create_sonar_geometry:
-                    # === Fixed geometry — compute and cache once ===
-                    x = sensor_x[None, :]   # (1, N)
-                    y = sensor_y[None, :]
-                    z = np.zeros_like(sensor_x)[None, :]
+            # --- Build max_intensity (fan) cloud ---
+            mx_sensor_x = mx_frame[:, 0].astype(np.float32)
+            mx_sensor_y = mx_frame[:, 1].astype(np.float32)
+            mx_intensity = mx_frame[:, 2].astype(np.float32)
 
-                    # === Rotate around Y (broadcasted) ===
-                    x_r = x * self.cos_a + z * self.sin_a
-                    y_r = y * np.ones_like(x_r)  # (B, N)
-                    z_r = -x * self.sin_a + z * self.cos_a
+            thresh_mask = mx_intensity >= self.intensity_threshold
+            mx_sensor_x = mx_sensor_x[thresh_mask]
+            mx_sensor_y = mx_sensor_y[thresh_mask]
+            mx_intensity = mx_intensity[thresh_mask]
 
-                    all_points = np.stack((x_r, y_r, z_r), axis=-1).reshape(-1, 3)  # (B*N, 3)
+            mx_num = mx_sensor_x.shape[0]
+            mx_points = np.zeros((mx_num, 4), dtype=np.float32)
+            mx_points[:, 0] = mx_sensor_x
+            mx_points[:, 1] = mx_sensor_y
+            mx_points[:, 3] = mx_intensity
 
-                    # Range filter mask
-                    ranges_xy = np.hypot(all_points[:, 0], all_points[:, 1])
-                    self._geom_mask = ranges_xy >= self.threshold_min_range
-                    filtered_points = all_points[self._geom_mask]
+            mx_pcl_msg = self._build_pcl_msg(mx_num, mx_points.tobytes())
+            self._depth_filter_and_publish(mx_pcl_msg, self.pub_pcl)
 
-                    # Voxel correspondence
-                    self.indices, _ = self.create_voxel_corresponding_points(self.voxel_centroids, filtered_points, method="closest_to_centroid", intensities=None)
-                    self.cached_positions = filtered_points[self.indices]
+            # --- Build probabilistic_intensity cloud ---
+            pr_sensor_x = pr_frame[:, 0].astype(np.float32)
+            pr_sensor_y = pr_frame[:, 1].astype(np.float32)
+            pr_intensity = pr_frame[:, 2].astype(np.float32)
 
-                    self.bool_create_sonar_geometry = True
+            if not self.bool_create_sonar_geometry:
+                # === Fixed geometry — compute and cache once ===
+                x = pr_sensor_x[None, :]   # (1, N)
+                y = pr_sensor_y[None, :]
+                z = np.zeros_like(pr_sensor_x)[None, :]
 
-                # === Per-frame: probabilities only ===
-                # shape: (B*N,) → filter → index
-                all_probs = (raw_intensity[None, :] * self.beam_probs[:, None]).reshape(-1)
-                filtered_probs = all_probs[self._geom_mask]
+                # === Rotate around Y (broadcasted) ===
+                x_r = x * self.cos_a + z * self.sin_a
+                y_r = y * np.ones_like(x_r)  # (B, N)
+                z_r = -x * self.sin_a + z * self.cos_a
 
-                num_points = self.indices.shape[0]
-                self.pointcloud_msg.width = num_points
-                self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
+                all_points = np.stack((x_r, y_r, z_r), axis=-1).reshape(-1, 3)  # (B*N, 3)
 
-                self.points = np.full((num_points, len(self.fields)), np.nan, dtype=np.float32)
-                # Position (fixed geometry)
-                self.points[:, 0:3] = self.cached_positions
-                # Probability (updated every frame)
-                self.points[:, 3] = filtered_probs[self.indices]
-                
-            else:
-                # Use points as-is from sensor_frame
-                z = np.zeros_like(sensor_x)
-                all_points = np.stack((sensor_x, sensor_y, z), axis=-1)
+                # Range filter mask
+                ranges_xy = np.hypot(all_points[:, 0], all_points[:, 1])
+                self._geom_mask = ranges_xy >= self.threshold_min_range
+                filtered_points = all_points[self._geom_mask]
 
-                filtered_points = all_points
-                filtered_intensity = raw_intensity
+                # Voxel correspondence
+                self.indices, _ = self.create_voxel_corresponding_points(self.voxel_centroids, filtered_points, method="closest_to_centroid", intensities=None)
+                self.cached_positions = filtered_points[self.indices]
 
-                num_points = filtered_points.shape[0]
+                self.bool_create_sonar_geometry = True
 
-                self.pointcloud_msg.width = num_points
-                self.pointcloud_msg.row_step = self.pointcloud_msg.point_step * num_points
+            # === Per-frame: probabilities only ===
+            # shape: (B*N,) → filter → index
+            all_probs = (pr_intensity[None, :] * self.beam_probs[:, None]).reshape(-1)
+            filtered_probs = all_probs[self._geom_mask]
 
-                self.points = np.full((num_points, len(self.fields)), np.nan, dtype=np.float32)
+            pr_num = self.indices.shape[0]
+            pr_points = np.empty((pr_num, 4), dtype=np.float32)
+            pr_points[:, 0:3] = self.cached_positions
+            pr_points[:, 3] = filtered_probs[self.indices]
 
-                # Position
-                self.points[:, 0:3] = filtered_points
+            pr_pcl_msg = self._build_pcl_msg(pr_num, pr_points.tobytes())
+            self._depth_filter_and_publish(pr_pcl_msg, self.pub_pcl_prob)
 
-                # Raw intensity
-                self.points[:, 3] = filtered_intensity
+    def _build_pcl_msg(self, num_points: int, data: bytes) -> PointCloud2:
+        '''Create a PointCloud2 from the fixed template, with the given width and data.'''
+        pcl_msg = PointCloud2()
+        pcl_msg.header.frame_id = self.frame_id
+        pcl_msg.height = 1
+        pcl_msg.fields = self.fields
+        pcl_msg.point_step = self.pointcloud_msg.point_step
+        pcl_msg.is_dense = True
+        pcl_msg.width = num_points
+        pcl_msg.row_step = pcl_msg.point_step * num_points
+        pcl_msg.data = data
+        return pcl_msg
 
-            self.pointcloud_msg.data = self.points.tobytes()
+    def _depth_filter_and_publish(self, pcl_msg: PointCloud2, publisher):
+        '''
+        Apply world-frame depth filter to a PointCloud2 message then publish it.
+        Transforms to world frame, filters by max_depth, transforms back, publishes.
+        '''
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                self.world_frame_id,
+                self.frame_id,
+                rclpy.time.Time()
+            )
 
-            # Depth filtering
+            pcl_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(pcl_msg, transform)
+
+            points_struct = pc2.read_points(
+                pcl_msg,
+                field_names=('x', 'y', 'z', 'intensity'),
+                skip_nans=False
+            )
+
+            points = np.column_stack((
+                points_struct['x'],
+                points_struct['y'],
+                points_struct['z'],
+                points_struct['intensity']
+            )).astype(np.float32)
+
+            z = points[:, 2]
+            points = points[z <= self.max_depth]
+            points = [tuple(p) for p in points]
+
+            pcl_msg = pc2.create_cloud(pcl_msg.header, self.fields, points)
+
             try:
                 transform = self.tf_buffer.lookup_transform(
-                    'alpha_rise/world',
                     self.frame_id,
+                    self.world_frame_id,
                     rclpy.time.Time()
                 )
-
-                # Apply transform
-                self.pointcloud_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
-
-                # Read points including intensity
-                points_struct = pc2.read_points(
-                    self.pointcloud_msg,
-                    field_names=('x', 'y', 'z', 'intensity'),
-                    skip_nans=False
-                )
-
-                # Convert structured → normal ndarray (N,4)
-                points = np.column_stack((
-                    points_struct['x'],
-                    points_struct['y'],
-                    points_struct['z'],
-                    points_struct['intensity']
-                )).astype(np.float32)
-
-                z = points[:, 2]
-
-                # Keep only points inside depth range
-                points = points[z <= self.max_depth]
-
-                points = [tuple(p) for p in points]
-
-                # Create new PointCloud2 preserving intensity
-                self.pointcloud_msg = pc2.create_cloud(self.pointcloud_msg.header, self.fields, points)
-                try:
-                    transform = self.tf_buffer.lookup_transform(
-                    self.frame_id,
-                    'alpha_rise/world',
-                    rclpy.time.Time()
-                    )
-
-                    # Transform back to sensor frame
-                    self.pointcloud_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(self.pointcloud_msg, transform)
-
-                    self.pub_pcl.publish(self.pointcloud_msg)
-
-                except TransformException as e:
-                    self.get_logger().warn(f'Transform not available: {e}')
+                pcl_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(pcl_msg, transform)
+                publisher.publish(pcl_msg)
             except TransformException as e:
-                self.get_logger().warn(f'Transform not available: {e}')     
+                self.get_logger().warn(f'Transform not available: {e}')
+        except TransformException as e:
+            self.get_logger().warn(f'Transform not available: {e}')
     
     def anisotropic_diffusion(self, image, niter=10, kappa=30, gamma=0.1):
         """
@@ -380,16 +378,16 @@ class FLS_PCL(Node):
         return np.clip(img, 0, 255).astype(src_dtype)
 
     def image_preprocess(self, current):    
+        rows, columns = current.shape
+        self.n_bins, self.n_beams = rows, columns
         if self.sim:
             # current = cv2.rotate(current, cv2.ROTATE_90_COUNTERCLOCKWISE)
-            rows, columns = current.shape
-            self.n_bins, self.n_beams = rows, columns
-
             return current
         else:
             # Lee filter. Better for multiplicative noise.
             # current = self.lee_filter(current, kernel_size=5)
-
+            rows, columns = current.shape
+            self.n_bins, self.n_beams = rows, columns
             # Zero out the middle 10 columns
             h, w = current.shape
             mid = w // 2
@@ -547,36 +545,33 @@ class FLS_PCL(Node):
 
             return median_indices, median_intensities
 
-    def extract_points_in_sensor_frame(self, image:np.ndarray, mode='threshold_intensity'):
+    def extract_points_in_sensor_frame(self, image:np.ndarray):
         """
         Convert pixels in the image into sensor-frame coordinates (x, y, intensity),
-        optionally filtering by beam skipping and range threshold first, then applying
-        intensity selection mode.
+        running both max_intensity and probabilistic_intensity branches simultaneously.
 
         Parameters
         ----------
         image : np.ndarray
             2D array (rows × columns) representing intensity values.
-        mode : str, optional
-            'threshold_intensity' - keep all points above threshold
-            'max_intensity' - keep only the highest-intensity point per column
-            'probabilistic_intensity' - convert pixel intensities into probablities.
 
         Returns
         -------
-        Tuple[np.ndarray, np.ndarray]
-            - image_coordinates: array of (row_index, column_index, intensity_value)
-            - sensor_frame_coordinates: array of (x, y, intensity_value)
+        Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+            - mx_image_coords:   (row, col, intensity) for max_intensity points
+            - mx_sensor_coords:  (x, y, intensity) for max_intensity points
+            - pr_image_coords:   (row, col, intensity) for probabilistic_intensity points
+            - pr_sensor_coords:  (x, y, intensity) for probabilistic_intensity points
         """
         if image is None:
             raise ValueError("Image not found or unable to load.")
-        
+
         """
             |<----->| number of beams = 512
             ------>x   -
             |          ^
             |          | 517 beams
-            |          v 
+            |          v
          y  v          -      <-------- Sensor Origin
         """
         # Create coordinate grids
@@ -591,7 +586,7 @@ class FLS_PCL(Node):
                 raw = np.linspace(-3500, 3500, image.shape[1])
                 self.bearings = np.array([np.radians(b * 0.01) for b in raw]).squeeze()
             theta_values = self.bearings[cols_flat]
-            #40m / 517 beams = 0.07m/beams
+            # 40m / 517 beams = 0.07m/beams
             meters_per_beam = self.max_range / self.n_bins
             r_values = meters_per_beam * (self.n_bins - rows_flat)
             self._cached_sensor_xy = (
@@ -599,137 +594,113 @@ class FLS_PCL(Node):
                 r_values * np.sin(theta_values),  # sensor_y
             )
         sensor_x, sensor_y = self._cached_sensor_xy
-        # print(len(sensor_x), flush=True)
 
-        if mode == 'probabilistic_intensity':
-            
-            # Build KD-tree from voxel points
-            z = self.voxel_centroids[:, 2]
+        # ------------------------------------------------------------------ #
+        # --- max_intensity branch ---                                        #
+        # ------------------------------------------------------------------ #
+        mx_rows = rows_flat.copy()
+        mx_cols = cols_flat.copy()
+        mx_sx   = sensor_x.copy()
+        mx_sy   = sensor_y.copy()
+        mx_int  = intensities.copy()
 
-            # Mask for voxels on sensor plane
-            z0_mask = np.isclose(z, 0.0)   # safer than z == 0 for floats
+        # Step 0: apply minimum range threshold
+        ranges = np.sqrt(mx_sx**2 + mx_sy**2)
+        valid_mask = ranges > self.threshold_min_range
+        mx_rows = mx_rows[valid_mask]
+        mx_cols = mx_cols[valid_mask]
+        mx_sx   = mx_sx[valid_mask]
+        mx_sy   = mx_sy[valid_mask]
+        mx_int  = mx_int[valid_mask]
 
-            # Keep only z = 0 voxels
-            voxel_centroids_z0 = self.voxel_centroids[z0_mask]   # (7646, 3)
-
-            # Use only XY for correspondence
-            voxel_points_xy = voxel_centroids_z0[:, :2]          # (1160, 2)
-            
-            # Stack sensor points
-            sensor_xy = np.column_stack((sensor_x, sensor_y))  # sensor_xy.shape: (264706, 2)
-            
-            # Extract occupancy points from SONAR frame which form correspondence with voxel centroids.
-            self.sensor_indices, intensities = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy, method="max_pool", intensities=intensities)
-            
-            #=== Uncomment for closest_to_centroid===
-            # self.sensor_indices, _ = self.create_voxel_corresponding_points(voxel_points_xy, sensor_xy, method="closest_to_centroid", intensities=intensities)
-            # intensities = intensities[self.sensor_indices]
-
-            # Spatial coordinates are voxel centroids; image coords from winning sensor point (unused)
-            rows_flat   = rows_flat[self.sensor_indices]   # (N,) — edge_list not consumed upstream
-            cols_flat   = cols_flat[self.sensor_indices]   # (N,)
-            sensor_x    = voxel_points_xy[:, 0]            # voxel centroid x
-            sensor_y    = voxel_points_xy[:, 1]            # voxel centroid y
-
-            # Start with all values at min_prob
-            probabilities = np.full_like(intensities, self.min_prob, dtype=float)
-
-            # Mask for linear interpolation range
-            mid_mask = (intensities > self.lower_bound_intensity) & (intensities < self.upper_bound_intensity)
-
-            # Linear interpolation between 0.2 and 0.9
-            probabilities[mid_mask] = self.min_prob + (
-                (intensities[mid_mask] - self.lower_bound_intensity) /
-                (self.upper_bound_intensity - self.lower_bound_intensity)
-            ) * (self.max_prob - self.min_prob)
-
-            # Anything above upper threshold → max_prob
-            probabilities[intensities >= self.upper_bound_intensity] = 0.9
-
-            # Round to nearest 0.1
-            intensities = np.round(probabilities * 10) / 10
-
-        elif mode == 'max_intensity':
-            # Step 0: apply minimum range threshold
-            ranges = np.sqrt(sensor_x**2 + sensor_y**2)
-            valid_mask = ranges > self.threshold_min_range
-            rows_flat = rows_flat[valid_mask]
-            cols_flat = cols_flat[valid_mask]
-            sensor_x = sensor_x[valid_mask]
-            sensor_y = sensor_y[valid_mask]
-            intensities = intensities[valid_mask]
-            if len(intensities) == 0:
-                # no valid points
-                return np.empty((0, 3)), np.empty((0, 3))
-
+        if len(mx_int) == 0:
+            mx_image_coords  = np.empty((0, 3))
+            mx_sensor_coords = np.empty((0, 3))
+        else:
             # Step 1: sort by columns
-            sort_idx = np.argsort(cols_flat)
-            sorted_cols = cols_flat[sort_idx]
-            sorted_intensities = intensities[sort_idx]
+            sort_idx = np.argsort(mx_cols)
+            sorted_cols        = mx_cols[sort_idx]
+            sorted_intensities = mx_int[sort_idx]
 
             # Step 2: find boundaries for each column
-            col_change = np.diff(sorted_cols, prepend=sorted_cols[0]-1)
+            col_change = np.diff(sorted_cols, prepend=sorted_cols[0] - 1)
             col_starts = np.flatnonzero(col_change)
 
             # Step 3: find max intensity per column using reduceat
             max_vals = np.maximum.reduceat(sorted_intensities, col_starts)
-            # map back to original indices
             max_indices_in_sorted = []
             for start, val in zip(col_starts, max_vals):
-                # search for the first occurrence of max in this column
                 end = col_starts[col_starts > start][0] if np.any(col_starts > start) else len(sorted_intensities)
                 local_idx = np.argmax(sorted_intensities[start:end])
                 max_indices_in_sorted.append(start + local_idx)
             max_indices_in_sorted = np.array(max_indices_in_sorted)
 
-            # Step 4: mask
-            final_mask = np.zeros_like(intensities, dtype=bool)
+            # Step 4: apply column-max mask
+            final_mask = np.zeros_like(mx_int, dtype=bool)
             final_mask[sort_idx[max_indices_in_sorted]] = True
-
-            # Apply mask
-            rows_flat = rows_flat[final_mask]
-            cols_flat = cols_flat[final_mask]
-            sensor_x = sensor_x[final_mask]
-            sensor_y = sensor_y[final_mask]
-            intensities = intensities[final_mask]
+            mx_rows = mx_rows[final_mask]
+            mx_cols = mx_cols[final_mask]
+            mx_sx   = mx_sx[final_mask]
+            mx_sy   = mx_sy[final_mask]
+            mx_int  = mx_int[final_mask]
 
             # Step 5: remove points with low intensity
-            intensity_mask = intensities >= self.intensity_threshold
+            intensity_mask = mx_int >= self.intensity_threshold
+            mx_rows = mx_rows[intensity_mask]
+            mx_cols = mx_cols[intensity_mask]
+            mx_sx   = mx_sx[intensity_mask]
+            mx_sy   = mx_sy[intensity_mask]
+            mx_int  = mx_int[intensity_mask]
 
-            rows_flat = rows_flat[intensity_mask]
-            cols_flat = cols_flat[intensity_mask]
-            sensor_x = sensor_x[intensity_mask]
-            sensor_y = sensor_y[intensity_mask]
-            intensities = intensities[intensity_mask]
+            if len(mx_int) == 0:
+                mx_image_coords  = np.empty((0, 3))
+                mx_sensor_coords = np.empty((0, 3))
+            else:
+                mx_image_coords  = np.column_stack((mx_rows, mx_cols, mx_int))
+                mx_sensor_coords = np.column_stack((mx_sx,   mx_sy,   mx_int))
 
-            if len(intensities) == 0:
-                return np.empty((0, 3)), np.empty((0, 3))
-            
-        elif mode == 'threshold_intensity':
-            ranges = np.sqrt(sensor_x**2 + sensor_y**2)
-            valid_mask = ranges > self.threshold_min_range
-            rows_flat = rows_flat[valid_mask]
-            cols_flat = cols_flat[valid_mask]
-            sensor_x = sensor_x[valid_mask]
-            sensor_y = sensor_y[valid_mask]
-            intensities = intensities[valid_mask]
+        # ------------------------------------------------------------------ #
+        # --- probabilistic_intensity branch ---                              #
+        # ------------------------------------------------------------------ #
+        pr_rows = rows_flat.copy()
+        pr_cols = cols_flat.copy()
+        pr_sx   = sensor_x.copy()
+        pr_sy   = sensor_y.copy()
+        pr_int  = intensities.copy()
 
-            # Only keep intensities greater than threshold
-            valid_mask = intensities > self.intensity_threshold
-            rows_flat = rows_flat[valid_mask]
-            cols_flat = cols_flat[valid_mask]
-            sensor_x = sensor_x[valid_mask]
-            sensor_y = sensor_y[valid_mask]
-            intensities = intensities[valid_mask]
-        
-        else:
-            raise ValueError("Invalid mode")
+        # Build KD-tree from voxel points (z = 0 plane only)
+        z_vox    = self.voxel_centroids[:, 2]
+        z0_mask  = np.isclose(z_vox, 0.0)
+        voxel_centroids_z0 = self.voxel_centroids[z0_mask]
+        voxel_points_xy    = voxel_centroids_z0[:, :2]
 
-        # Combine into arrays
-        image_coordinates = np.column_stack((rows_flat, cols_flat, intensities))
-        sensor_frame_coordinates = np.column_stack((sensor_x, sensor_y, intensities))
+        sensor_xy = np.column_stack((pr_sx, pr_sy))
 
-        return image_coordinates, sensor_frame_coordinates
+        # Voxel correspondence via max-pool
+        self.sensor_indices, pr_int = self.create_voxel_corresponding_points(
+            voxel_points_xy, sensor_xy, method="max_pool", intensities=pr_int
+        )
+
+        # Spatial coordinates are voxel centroids; image coords from winning sensor point
+        pr_rows = pr_rows[self.sensor_indices]
+        pr_cols = pr_cols[self.sensor_indices]
+        pr_sx   = voxel_points_xy[:, 0]
+        pr_sy   = voxel_points_xy[:, 1]
+
+        # Linear-interpolation probability mapping
+        probabilities = np.full_like(pr_int, self.min_prob, dtype=float)
+        mid_mask = (pr_int > self.lower_bound_intensity) & (pr_int < self.upper_bound_intensity)
+        probabilities[mid_mask] = self.min_prob + (
+            (pr_int[mid_mask] - self.lower_bound_intensity) /
+            (self.upper_bound_intensity - self.lower_bound_intensity)
+        ) * (self.max_prob - self.min_prob)
+        probabilities[pr_int >= self.upper_bound_intensity] = 0.9
+        pr_int = np.round(probabilities * 10) / 10
+
+        pr_image_coords  = np.column_stack((pr_rows, pr_cols, pr_int))
+        pr_sensor_coords = np.column_stack((pr_sx,   pr_sy,   pr_int))
+
+        return mx_image_coords, mx_sensor_coords, pr_image_coords, pr_sensor_coords
     
     def pointcloud_CB(self, msg):
         '''
@@ -737,9 +708,9 @@ class FLS_PCL(Node):
         Publish the resultant probabilty cloud.
         Stores the msg as a .pcl file
         '''
-        if self.save_as_pcd_bool:  
+        if self.save_as_pcd_bool:
             transform = self.tf_buffer.lookup_transform(
-                'alpha_rise/world',
+                self.world_frame_id,
                 self.frame_id,
                 rclpy.time.Time()
                 )
@@ -758,7 +729,8 @@ class FLS_PCL(Node):
             intens = np_points[:, 3]
             colors = intens.reshape(-1, 1)
             colors = np.repeat(colors, 3, axis=1)
-            colors = colors / np.max(colors)
+            max_val = np.max(colors) if colors.size > 0 else 1.0
+            colors = colors / max_val if max_val > 0 else colors
             cloud.colors = o3d.utility.Vector3dVector(colors)
 
             # Add to accumulated cloud
