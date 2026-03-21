@@ -11,7 +11,6 @@ from tf2_ros import Buffer, TransformListener
 import tf2_sensor_msgs.tf2_sensor_msgs
 import sensor_msgs_py.point_cloud2 as pc2
 from tf2_ros import TransformException
-from scipy.ndimage import uniform_filter
 from oculus_interfaces.msg import Ping
 from visualization_msgs.msg import Marker
 from scipy.spatial import cKDTree
@@ -678,7 +677,7 @@ class FLS_PCL(Node):
 
         # Voxel correspondence via max-pool
         self.sensor_indices, pr_int = self.create_voxel_corresponding_points(
-            voxel_points_xy, sensor_xy, method="max_pool", intensities=pr_int
+            voxel_points_xy, sensor_xy, method="median_pool", intensities=pr_int
         )
 
         # Spatial coordinates are voxel centroids; image coords from winning sensor point
