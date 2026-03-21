@@ -7,7 +7,6 @@
     # fls_voxel_node
     range_max: 40.0
     horizontal_fov_deg: 70.0
-    spacing_angle_deg: 1.0
     resolution: 1.0
     
     # fls_pcl_node

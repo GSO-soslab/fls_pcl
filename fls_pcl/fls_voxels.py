@@ -23,7 +23,6 @@ class FLS_Voxels(Node):
         self.declare_parameter('range_max', Parameter.Type.DOUBLE)
         self.declare_parameter('horizontal_fov_deg', Parameter.Type.DOUBLE)
         self.declare_parameter('vertical_fov_deg', Parameter.Type.DOUBLE)
-        self.declare_parameter('spacing_angle_deg', Parameter.Type.DOUBLE)
         self.declare_parameter('resolution', Parameter.Type.DOUBLE)  # meters
         self.declare_parameter('sensor_frame_id', Parameter.Type.STRING)
         self.declare_parameter('marker_topic', Parameter.Type.STRING)
