@@ -43,23 +43,23 @@ public:
         this->get_parameter("robot_frame_id", robot_frame_id_);
 
         // --- Topics ---
-        this->declare_parameter<std::string>("sub_pointcloud_topic", "/pointcloud");
-        this->get_parameter("sub_pointcloud_topic", sub_pointcloud_topic_);
+        this->declare_parameter<std::string>("pointcloud_sub_topic", "/pointcloud");
+        this->get_parameter("pointcloud_sub_topic", sub_pointcloud_topic_);
 
-        this->declare_parameter<std::string>("sub_pointcloud_topic_2", "");
-        this->get_parameter("sub_pointcloud_topic_2", sub_pointcloud_topic_2_);
+        this->declare_parameter<std::string>("pointcloud_2_sub_topic", "");
+        this->get_parameter("pointcloud_2_sub_topic", sub_pointcloud_topic_2_);
 
-        this->declare_parameter<std::string>("sub_odometry_topic", "/odometry");
-        this->get_parameter("sub_odometry_topic", sub_odometry_topic_);
+        this->declare_parameter<std::string>("odometry_sub_topic", "/odometry");
+        this->get_parameter("odometry_sub_topic", sub_odometry_topic_);
 
-        this->declare_parameter<std::string>("pub_voxel_topic", "/occupancy_grid");
-        this->get_parameter("pub_voxel_topic", pub_voxel_topic_);
+        this->declare_parameter<std::string>("voxel_pub_topic", "/occupancy_grid");
+        this->get_parameter("voxel_pub_topic", pub_voxel_topic_);
 
-        this->declare_parameter<std::string>("pub_global_costmap_topic", "/global_costmap_2d");
-        this->get_parameter("pub_global_costmap_topic", pub_global_costmap_topic_);
+        this->declare_parameter<std::string>("global_costmap_pub_topic", "/global_costmap_2d");
+        this->get_parameter("global_costmap_pub_topic", pub_global_costmap_topic_);
 
-        this->declare_parameter<std::string>("pub_local_costmap_topic", "/local_costmap_2d");
-        this->get_parameter("pub_local_costmap_topic", pub_local_costmap_topic_);
+        this->declare_parameter<std::string>("local_costmap_pub_topic", "/local_costmap_2d");
+        this->get_parameter("local_costmap_pub_topic", pub_local_costmap_topic_);
 
         // --- Voxel map ---
         this->declare_parameter<double>("voxel_resolution", 1.0);

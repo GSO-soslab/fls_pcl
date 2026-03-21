@@ -46,8 +46,8 @@ class FLS_PCL(Node):
         self.declare_parameter('threshold_min_range',Parameter.Type.DOUBLE)
         self.threshold_min_range = self.get_parameter('threshold_min_range').value
 
-        self.declare_parameter('vertical_beamwidth', Parameter.Type.DOUBLE)
-        self.vertical_beamwidth = self.get_parameter('vertical_beamwidth').value
+        self.declare_parameter('vertical_fov_deg', Parameter.Type.DOUBLE)
+        self.vertical_beamwidth = self.get_parameter('vertical_fov_deg').value
 
         self.declare_parameter('sensor_frame_id', Parameter.Type.STRING)
         self.frame_id = self.get_parameter('sensor_frame_id').value
@@ -56,7 +56,7 @@ class FLS_PCL(Node):
         self.world_frame_id = self.get_parameter('world_frame_id').value
 
         self.declare_parameter('ping_sub_topic',Parameter.Type.STRING)
-        self.declare_parameter('marker_sub_topic',Parameter.Type.STRING)
+        self.declare_parameter('marker_topic',Parameter.Type.STRING)
         self.declare_parameter('image_sub_topic',Parameter.Type.STRING)
         
         self.declare_parameter('pointcloud_pub_topic', Parameter.Type.STRING)
@@ -147,7 +147,7 @@ class FLS_PCL(Node):
             self.receive_ping = True
 
         # === Sub to Marker topic for Voxels ===
-        self.sub_marker = self.create_subscription(Marker, self.get_parameter('marker_sub_topic').value, self.marker_CB, 10)
+        self.sub_marker = self.create_subscription(Marker, self.get_parameter('marker_topic').value, self.marker_CB, 10)
 
         # === Initialize PointCloud2 message ===
         self.pointcloud_msg = PointCloud2()

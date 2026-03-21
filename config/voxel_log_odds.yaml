@@ -10,18 +10,18 @@
 
       # --- Topics ---
       # Pointcloud topics to subscribe
-      sub_pointcloud_topic: "/alpha_rise/fls/pointcloud/probability"
-      sub_pointcloud_topic_2: "/alpha_rise/msis/pointcloud/fan"
+      pointcloud_sub_topic: "/alpha_rise/fls/pointcloud/probability"
+      pointcloud_2_sub_topic: "/alpha_rise/msis/pointcloud/fan"
 
       # Odometry topic used to track vehicle depth (Z position)
-      sub_odometry_topic: "/alpha_rise/odometry/filtered"
+      odometry_sub_topic: "/alpha_rise/odometry/filtered"
 
       # 3D voxel map output
-      pub_voxel_topic: "/alpha_rise/costmap/voxel"
+      voxel_pub_topic: "/alpha_rise/costmap/voxel"
 
       # 2D occupancy grid output
-      pub_global_costmap_topic: "/alpha_rise/costmap/global"
-      pub_local_costmap_topic: "/alpha_rise/costmap"
+      global_costmap_pub_topic: "/alpha_rise/costmap/global"
+      local_costmap_pub_topic: "/alpha_rise/costmap"
 
       # --- Voxel map ---
       # Side length of individual voxel (m)
@@ -32,7 +32,7 @@
       logodds_max: 20.0
 
       # Only voxels above this probability are visualized
-      probability_threshold: 0.999
+      probability_threshold: 0.9
 
       # --- Costmaps ---
       # Global costmap side length (m); cell count = ceil(dimension / voxel_resolution)

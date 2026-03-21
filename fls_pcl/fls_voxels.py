@@ -25,16 +25,18 @@ class FLS_Voxels(Node):
         self.declare_parameter('vertical_fov_deg', Parameter.Type.DOUBLE)
         self.declare_parameter('spacing_angle_deg', Parameter.Type.DOUBLE)
         self.declare_parameter('resolution', Parameter.Type.DOUBLE)  # meters
-        self.declare_parameter('frame_id', Parameter.Type.STRING)
+        self.declare_parameter('sensor_frame_id', Parameter.Type.STRING)
+        self.declare_parameter('marker_topic', Parameter.Type.STRING)
 
         self.max_range = self.get_parameter('range_max').value
-        self.h_fov = math.radians(self.get_parameter('horizontal_fov_deg').value ) 
-        self.v_fov = math.radians(self.get_parameter('vertical_fov_deg').value ) 
+        self.h_fov = math.radians(self.get_parameter('horizontal_fov_deg').value )
+        self.v_fov = math.radians(self.get_parameter('vertical_fov_deg').value )
         self.resolution = self.get_parameter('resolution').value
-        self.frame_id = self.get_parameter('frame_id').value
+        self.frame_id = self.get_parameter('sensor_frame_id').value
+        marker_topic = self.get_parameter('marker_topic').value
 
         # ---- Publishers ----
-        self.marker_pub = self.create_publisher(Marker, 'fls/geometry', 10)
+        self.marker_pub = self.create_publisher(Marker, marker_topic, 10)
         self.create_timer(0.2, self.publish_all)
     
     def publish_all(self):
