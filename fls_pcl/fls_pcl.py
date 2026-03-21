@@ -131,6 +131,7 @@ class FLS_PCL(Node):
         # === Publishers ===
         self.pub_pcl      = self.create_publisher(PointCloud2, pub_topic, 10)
         self.pub_pcl_prob = self.create_publisher(PointCloud2, pub_topic + '/probability', 10)
+        self.pub_pcl_raw  = self.create_publisher(PointCloud2, pub_topic + '/raw', 10)
         self.pub_fls_median_image = self.create_publisher(Image, pub_topic+'/image/filtered', 10)
 
         # === Subscribers === 
@@ -216,13 +217,26 @@ class FLS_PCL(Node):
         '''
         # Only start when both Ping & Marker msgs are in memory.
         if self.receive_ping and self.receive_marker:
-            current = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
+            raw_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding="passthrough")
 
-            current = self.image_preprocess(current)
+            current = self.image_preprocess(raw_image.copy())
             self.pub_fls_median_image.publish(self.bridge.cv2_to_imgmsg(current, encoding="mono8"))
 
             # === Convert all valid pixels to sensor frame coordinates (both modes) ===
             mx_edge, mx_frame, pr_edge, pr_frame = self.extract_points_in_sensor_frame(current)
+
+            # --- Build raw intensity cloud (unfiltered image, no range/depth filter) ---
+            if hasattr(self, '_cached_sensor_xy'):
+                raw_intensities = raw_image.flatten().astype(np.float32)
+                raw_sx, raw_sy = self._cached_sensor_xy
+                raw_num = raw_sx.shape[0]
+                raw_points = np.zeros((raw_num, 4), dtype=np.float32)
+                raw_points[:, 0] = raw_sx
+                raw_points[:, 1] = raw_sy
+                raw_points[:, 3] = raw_intensities
+                raw_pcl_msg = self._build_pcl_msg(raw_num, raw_points.tobytes())
+                raw_pcl_msg.header.stamp = self.get_clock().now().to_msg()
+                self.pub_pcl_raw.publish(raw_pcl_msg)
 
             # --- Build max_intensity (fan) cloud ---
             mx_sensor_x = mx_frame[:, 0].astype(np.float32)
@@ -557,10 +571,10 @@ class FLS_PCL(Node):
         Returns
         -------
         Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
-            - mx_image_coords:   (row, col, intensity) for max_intensity points
-            - mx_sensor_coords:  (x, y, intensity) for max_intensity points
-            - pr_image_coords:   (row, col, intensity) for probabilistic_intensity points
-            - pr_sensor_coords:  (x, y, intensity) for probabilistic_intensity points
+            - mx_image_coords:  (row, col, intensity) for max_intensity points
+            - mx_sensor_coords: (x, y, intensity) for max_intensity points
+            - pr_image_coords:  (row, col, intensity) for probabilistic_intensity points
+            - pr_sensor_coords: (x, y, intensity) for probabilistic_intensity points
         """
         if image is None:
             raise ValueError("Image not found or unable to load.")
@@ -693,7 +707,7 @@ class FLS_PCL(Node):
             (pr_int[mid_mask] - self.lower_bound_intensity) /
             (self.upper_bound_intensity - self.lower_bound_intensity)
         ) * (self.max_prob - self.min_prob)
-        probabilities[pr_int >= self.upper_bound_intensity] = 0.9
+        probabilities[pr_int >= self.upper_bound_intensity] = self.max_prob
         pr_int = np.round(probabilities * 10) / 10
 
         pr_image_coords  = np.column_stack((pr_rows, pr_cols, pr_int))
