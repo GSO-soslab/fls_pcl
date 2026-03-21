@@ -677,7 +677,7 @@ class FLS_PCL(Node):
 
         # Voxel correspondence via max-pool
         self.sensor_indices, pr_int = self.create_voxel_corresponding_points(
-            voxel_points_xy, sensor_xy, method="median_pool", intensities=pr_int
+            voxel_points_xy, sensor_xy, method="max_pool", intensities=pr_int
         )
 
         # Spatial coordinates are voxel centroids; image coords from winning sensor point
