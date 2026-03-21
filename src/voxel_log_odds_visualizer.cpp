@@ -43,11 +43,8 @@ public:
         this->get_parameter("robot_frame_id", robot_frame_id_);
 
         // --- Topics ---
-        this->declare_parameter<std::string>("pointcloud_sub_topic", "/pointcloud");
-        this->get_parameter("pointcloud_sub_topic", sub_pointcloud_topic_);
-
-        this->declare_parameter<std::string>("pointcloud_2_sub_topic", "");
-        this->get_parameter("pointcloud_2_sub_topic", sub_pointcloud_topic_2_);
+        this->declare_parameter<std::vector<std::string>>("pointcloud_sub_topics", {"/pointcloud"});
+        this->get_parameter("pointcloud_sub_topics", sub_pointcloud_topics_);
 
         this->declare_parameter<std::string>("odometry_sub_topic", "/odometry");
         this->get_parameter("odometry_sub_topic", sub_odometry_topic_);
@@ -98,15 +95,12 @@ public:
         half_grid_ = global_costmap_dim_ / 2.0;
 
         // ROS subscriptions and publishers
-        pc_sub_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-            sub_pointcloud_topic_, 10,
-            std::bind(&VoxelLogOddsVisualizer::pcCallback, this, std::placeholders::_1)
-        );
-
-        pc_sub_2_ = this->create_subscription<sensor_msgs::msg::PointCloud2>(
-                sub_pointcloud_topic_2_, 10,
+        for (const auto& topic : sub_pointcloud_topics_) {
+            pc_subs_.push_back(this->create_subscription<sensor_msgs::msg::PointCloud2>(
+                topic, 10,
                 std::bind(&VoxelLogOddsVisualizer::pcCallback, this, std::placeholders::_1)
-        );
+            ));
+        }
 
         odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
             sub_odometry_topic_, 10,
@@ -142,8 +136,7 @@ private:
     std::string robot_frame_id_;
 
     // --- Topics ---
-    std::string sub_pointcloud_topic_;
-    std::string sub_pointcloud_topic_2_;
+    std::vector<std::string> sub_pointcloud_topics_;
     std::string sub_odometry_topic_;
     std::string pub_voxel_topic_;
     std::string pub_global_costmap_topic_;
@@ -167,8 +160,7 @@ private:
     bool save_pcd_;
     std::string output_pcd_file_;
 
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_;
-    rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr pc_sub_2_;
+    std::vector<rclcpp::Subscription<sensor_msgs::msg::PointCloud2>::SharedPtr> pc_subs_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr prob_cloud_pub_;
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr global_ogm_pub_;
