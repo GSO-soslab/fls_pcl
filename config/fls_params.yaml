@@ -26,8 +26,8 @@
     threshold_min_range: 5.0    # m
     probabilistic_intensity:
       intensity:
-        lower_bound_intensity: 32
-        upper_bound_intensity: 100
+        lower_bound_intensity: 56   # Noise floor
+        upper_bound_intensity: 100  # Lower bound for signal
         min_probability: 0.2
         max_probability: 0.9
       sonar_params:
