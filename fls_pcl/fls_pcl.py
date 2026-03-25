@@ -268,26 +268,25 @@ class FLS_PCL(Node):
 
                 all_points = np.stack((x_r, y_r, z_r), axis=-1).reshape(-1, 3)  # (B*N, 3)
 
-                # Range filter mask
-                ranges_xy = np.hypot(all_points[:, 0], all_points[:, 1])
-                self._geom_mask = ranges_xy >= self.threshold_min_range
-                filtered_points = all_points[self._geom_mask]
+                # Voxel correspondence (all voxels)
+                all_indices, _ = self.closest_to_centroid(self.voxel_centroids, all_points)
 
-                # Voxel correspondence
-                self.indices, _ = self.closest_to_centroid(self.voxel_centroids, filtered_points)
-                self.cached_positions = filtered_points[self.indices]
+                # Threshold voxels by min range after correspondence
+                voxel_ranges = np.hypot(self.voxel_centroids[:, 0], self.voxel_centroids[:, 1])
+                voxel_mask = voxel_ranges >= self.threshold_min_range
+                self.indices = all_indices[voxel_mask]
+                self.cached_positions = self.voxel_centroids[voxel_mask]
 
                 self.bool_create_sonar_geometry = True
 
             # === Per-frame: probabilities only ===
             # shape: (B*N,) → filter → index
             all_probs = (pr_intensity[None, :] * self.beam_probs[:, None]).reshape(-1)
-            filtered_probs = all_probs[self._geom_mask]
 
             pr_num = self.indices.shape[0]
             pr_points = np.empty((pr_num, 4), dtype=np.float32)
             pr_points[:, 0:3] = self.cached_positions
-            pr_points[:, 3] = filtered_probs[self.indices]
+            pr_points[:, 3] = all_probs[self.indices]
 
             pr_pcl_msg = self.build_pcl_msg(pr_num, pr_points.tobytes())
             self.depth_filter_and_publish(pr_pcl_msg, self.pub_pcl_prob)
@@ -333,7 +332,7 @@ class FLS_PCL(Node):
             )).astype(np.float32)
 
             z = points[:, 2]
-            points = points[z <= self.max_depth]
+            points = points[(z >= self.min_depth) & (z <= self.max_depth)]
 
             pcl_msg.data = points.tobytes()
             pcl_msg.width = len(points)
