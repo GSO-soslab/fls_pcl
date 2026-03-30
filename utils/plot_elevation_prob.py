@@ -3,9 +3,16 @@ import matplotlib.pyplot as plt
 
 def plot_directivity():
         c = 1500
+        
+        #FLS
         f = 1.2*1000*1000
         vertical_beamwidth = 12.0
         aperture_size = 0.0067
+
+        #MSIS
+        f = 750*1000
+        vertical_beamwidth = 25.0
+        aperture_size = 0.0049 
 
         # === Sonar Physical Parameters ===
         wavelength = c / f
