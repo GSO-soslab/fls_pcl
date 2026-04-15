@@ -6,7 +6,6 @@ from rclpy.qos import QoSProfile, DurabilityPolicy
 from sensor_msgs.msg import PointCloud2, PointField, Image
 from std_msgs.msg import Header
 import numpy as np
-import open3d as o3d
 from cv_bridge import CvBridge
 from tf2_ros import Buffer, TransformListener
 import tf2_sensor_msgs.tf2_sensor_msgs
@@ -15,7 +14,6 @@ from tf2_ros import TransformException
 from oculus_interfaces.msg import Ping
 from visualization_msgs.msg import Marker
 from scipy.spatial import cKDTree
-import cv2
 
 class FLS_PCL(Node):
     """
@@ -122,7 +120,9 @@ class FLS_PCL(Node):
         self.bridge = CvBridge()
 
         # === Persistent accumulated cloud ===
-        self.accumulated_cloud = o3d.geometry.PointCloud()
+        if self.save_as_pcd_bool:
+            import open3d as o3d
+            self.accumulated_cloud = o3d.geometry.PointCloud()
 
         # === Triggers ===
         self.receive_ping = False
@@ -549,6 +549,7 @@ class FLS_PCL(Node):
 
             np_points = np.frombuffer(bytes(pc_data), dtype=np.float32).reshape(-1, point_step // 4)[:, :4]
 
+            import open3d as o3d
             cloud = o3d.geometry.PointCloud()
             cloud.points = o3d.utility.Vector3dVector(np_points[:, :3])
 
@@ -564,37 +565,39 @@ class FLS_PCL(Node):
             self.accumulated_cloud.colors.extend(cloud.colors)
 
     def on_shutdown(self):
-        self.get_logger().info(f"Shutting down → saving PCD: {self.pcd_filename}")
-        
-        if not self.accumulated_cloud.has_points():
-            print("⚠ Warning: Point cloud is empty")
-            return
-        
-        # Clean the point cloud before saving
-        points = np.asarray(self.accumulated_cloud.points)
-        
-        # Remove NaN and Inf values
-        valid_mask = ~(np.isnan(points).any(axis=1) | np.isinf(points).any(axis=1))
-        valid_points = points[valid_mask]
-        
-        if len(valid_points) == 0:
-            print("⚠ Warning: No valid points after filtering")
-            return
-        
-        # Create clean point cloud
-        clean_pcd = o3d.geometry.PointCloud()
-        clean_pcd.points = o3d.utility.Vector3dVector(valid_points)
-        
-        # Copy colors/normals if they exist
-        if self.accumulated_cloud.has_colors():
-            colors = np.asarray(self.accumulated_cloud.colors)[valid_mask]
-            clean_pcd.colors = o3d.utility.Vector3dVector(colors)
-        
-        try:
-            o3d.io.write_point_cloud(self.pcd_filename, clean_pcd)
-            print(f"✓ Saved {len(valid_points)} valid points to {self.pcd_filename}")
-        except Exception as e:
-            print(f"✗ Failed to save: {e}")
+        if self.save_as_pcd_bool:
+            self.get_logger().info(f"Shutting down → saving PCD: {self.pcd_filename}")
+            
+            if not self.accumulated_cloud.has_points():
+                print("⚠ Warning: Point cloud is empty")
+                return
+            
+            # Clean the point cloud before saving
+            points = np.asarray(self.accumulated_cloud.points)
+            
+            # Remove NaN and Inf values
+            valid_mask = ~(np.isnan(points).any(axis=1) | np.isinf(points).any(axis=1))
+            valid_points = points[valid_mask]
+            
+            if len(valid_points) == 0:
+                print("⚠ Warning: No valid points after filtering")
+                return
+            
+            # Create clean point cloud
+            import open3d as o3d
+            clean_pcd = o3d.geometry.PointCloud()
+            clean_pcd.points = o3d.utility.Vector3dVector(valid_points)
+            
+            # Copy colors/normals if they exist
+            if self.accumulated_cloud.has_colors():
+                colors = np.asarray(self.accumulated_cloud.colors)[valid_mask]
+                clean_pcd.colors = o3d.utility.Vector3dVector(colors)
+            
+            try:
+                o3d.io.write_point_cloud(self.pcd_filename, clean_pcd)
+                print(f"✓ Saved {len(valid_points)} valid points to {self.pcd_filename}")
+            except Exception as e:
+                print(f"✗ Failed to save: {e}")
 
 def main():
     rclpy.init()
