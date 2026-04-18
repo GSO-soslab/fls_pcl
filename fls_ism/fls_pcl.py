@@ -54,9 +54,11 @@ class FLS_PCL(Node):
         self.declare_parameter('world_frame_id', Parameter.Type.STRING)
         self.world_frame_id = self.get_parameter('world_frame_id').value
 
-        self.declare_parameter('ping_sub_topic',Parameter.Type.STRING)
         self.declare_parameter('marker_topic',Parameter.Type.STRING)
         self.declare_parameter('image_sub_topic',Parameter.Type.STRING)
+
+        if not self.sim:
+            self.declare_parameter('ping_sub_topic',Parameter.Type.STRING)
         
         self.declare_parameter('pointcloud_pub_topic', Parameter.Type.STRING)
         pub_topic = self.get_parameter('pointcloud_pub_topic').value
