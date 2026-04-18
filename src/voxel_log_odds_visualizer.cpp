@@ -35,6 +35,11 @@ class VoxelLogOddsVisualizer : public rclcpp::Node {
 public:
     //Constructor
     VoxelLogOddsVisualizer() : Node("voxel_logodds_visualizer") {
+        loadParams();
+        setupROS();
+    }
+
+    void loadParams() {
         // --- Frames ---
         this->declare_parameter<std::string>("frame_id", "map");
         this->get_parameter("frame_id", frame_id_);
@@ -93,8 +98,9 @@ public:
 
         n_voxels_ = static_cast<int>(std::ceil(global_costmap_dim_ / voxel_res_));
         half_grid_ = global_costmap_dim_ / 2.0;
+    }
 
-        // ROS subscriptions and publishers
+    void setupROS() {
         for (const auto& topic : sub_pointcloud_topics_) {
             pc_subs_.push_back(this->create_subscription<sensor_msgs::msg::PointCloud2>(
                 topic, 10,
@@ -114,7 +120,6 @@ public:
         global_ogm_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(pub_global_costmap_topic_, 10);
         local_ogm_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(pub_local_costmap_topic_, 10);
 
-        // TF listener
         tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
         tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
@@ -123,7 +128,7 @@ public:
     }
 
     //Destructor
-    ~VoxelLogOddsVisualizer() { 
+    ~VoxelLogOddsVisualizer() {
         if (save_pcd_) {
             RCLCPP_INFO(this->get_logger(), "Shutting down, saving PCD file...");
             savePCD(output_pcd_file_);
