@@ -30,13 +30,6 @@ Main processing node. Subscribes to raw sonar images and outputs probabilistic p
 | `PointCloud2` | Unfiltered sonar image as points |
 | `Image` | Preprocessed sonar image |
 
-**Pipeline**
-1. Preprocesses image: tapered wedge mask + anisotropic diffusion (Perona-Malik) for real hardware; passthrough in sim mode.
-2. Computes bearing directivity weights using a sinc beam pattern over the vertical FOV.
-3. Maps pixel intensity to occupancy probability (linear interpolation between configured bounds).
-4. Max-pools measurements onto the pre-computed voxel grid and applies elevation weights.
-5. Transforms to world frame via TF2 and filters by depth.
-
 ---
 
 ### `fls_voxel_node` — `fls_ism/fls_voxels.py`
@@ -59,16 +52,6 @@ Starts `fls_voxel_node` and `fls_pcl_node` under the `alpha_rise` namespace. Pri
 ```bash
 ros2 launch fls_ism fls_ism.launch.py
 ```
-
-### `post_process.launch.py`
-Full post-processing stack for bag replay. Launches:
-- FLS processing (`fls_ism.launch.py`)
-- MSIS voxel processing (`pcl_proc`)
-- Voxel log-odds accumulation (`pcl_proc`)
-- MBES inverse sensor model (`mbes_ism`)
-- Vehicle description + path (`alpha_rise_bringup`)
-- RViz (`config_post.rviz`)
-- `ros2 bag play` with `use_sim_time: true`
 
 ---
 
