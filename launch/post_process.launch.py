@@ -81,6 +81,16 @@ def generate_launch_description():
         launch_arguments={'use_sim_time': 'true'}.items()
     )
 
+    mbes_inv = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory('mbes_ism'),
+                'launch',
+                'mbes_ism.launch.py'
+            )
+        ),
+        launch_arguments={'use_sim_time': 'true'}.items()
+    )
 
     rviz_config_dir = os.path.join( get_package_share_directory('alpha_rise_description'), 'rviz', 'config_post.rviz' )
 
@@ -128,7 +138,7 @@ def generate_launch_description():
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_09_45/rosbag2_2025_12_05-16_09_47'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_26_08/rosbag2_2025_12_05-16_26_09'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_43_41/rosbag2_2025_12_05-16_43_42'
-    bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_54_58/rosbag2_2025_12_05-16_55_00'
+    # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-16_54_58/rosbag2_2025_12_05-16_55_00'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_09_41/rosbag2_2025_12_05-17_09_42'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_22_29/rosbag2_2025_12_05-17_22_30'
     # bag_file_path = '/home/tony/auv_ws/bags/whale_rock/whale_rock_12_05_25/rosbag2_2025_12_05-17_35_12/rosbag2_2025_12_05-17_35_13'
@@ -136,29 +146,28 @@ def generate_launch_description():
     # bag_file_path = '/home/tony/auv_ws/bags/mbes_testing_allen_harbor_3_13_26/rosbag2_2026c_03_13-17_21_16/rosbag2_2026_03_13-17_21_16'
     # bag_file_path = '/home/tony/auv_ws/bags/mbes_testing_allen_harbor_3_13_26/rosbag2_2026_03_13-17_34_47/rosbag2_2026_03_13-17_34_48'
 
-    # ROS2 bag play command
+    bag_file_path = '/media/tony/Vault/2026_04_09_Whale_rock/rosbag2_2026_04_09-18_31_27/rosbag2_2026_04_09-18_31_28'
+
     bag_play = ExecuteProcess(
         cmd=[
             'ros2', 'bag', 'play', bag_file_path,
             # '--start-offset', '70.0',
-            '--rate', '4.0', ##FOR SOME REASON TF WORKS BEST WITH 4.0
-            '--clock'
+            '--rate', '1.0',
+            '--clock',
         ],
         output='screen'
     )
 
+    ld.add_action(bag_play)
+
+    ld.add_action(description)
     ld.add_action(fls_voxel_prob)
     ld.add_action(msis_voxel_prob)
     ld.add_action(voxel_log_odds)
-    ld.add_action(bag_play)
-
+    ld.add_action(mbes_inv)
     ld.add_action(rviz)
     ld.add_action(path)
-
-
-    ld.add_action(description)
     # ld.add_action(octomap)
-
     # ld.add_action(foxglove)
 
 
