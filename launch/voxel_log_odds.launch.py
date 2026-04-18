@@ -13,13 +13,13 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     param_config = os.path.join(
-        get_package_share_directory('fls_pcl'),
+        get_package_share_directory('fls_ism'),
         'config',
         'voxel_log_odds.yaml'
     )
     
     node = Node(
-        package='fls_pcl',
+        package='fls_ism',
         executable='voxel_log_odds_visualizer',
         name='voxel_log_odds_visualizer',
         namespace="alpha_rise",

@@ -2,12 +2,12 @@
 """
 Offline Voxel Map Builder
 
-Reads a rosbag2 bag and replicates the fls_pcl + voxel_log_odds_visualizer
+Reads a rosbag2 bag and replicates the fls_ism + voxel_log_odds_visualizer
 pipeline in pure Python/NumPy — no ROS2 timing constraints.
 
 Usage:
     source /home/tony/auv_ws/install/setup.bash
-    python3 src/fls_pcl/scripts/offline_voxel_mapper.py
+    python3 src/fls_ism/scripts/offline_voxel_mapper.py
 
 Edit config/offline_mapper.yaml before running (bag_path, voxel_resolution, etc.).
 """

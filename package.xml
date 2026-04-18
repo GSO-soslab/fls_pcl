@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <package format="3">
-  <name>fls_pcl</name>
+  <name>fls_ism</name>
   <version>0.1.0</version>
-  <description>The fls_pcl package</description>
+  <description>The fls_ism package</description>
 
   <maintainer email="tony.jacob@uri.edu">Tony Jacob</maintainer>
   <license>BSD</license> 

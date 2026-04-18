@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.5)
-project(fls_pcl)
+project(fls_ism)
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
@@ -45,9 +45,9 @@ install(DIRECTORY config/
   DESTINATION share/${PROJECT_NAME}/config)
 
 install(PROGRAMS
-  fls_pcl/fls_pcl.py
-  fls_pcl/depth_planner.py
-  fls_pcl/fls_voxels.py
+  fls_ism/fls_pcl.py
+  fls_ism/depth_planner.py
+  fls_ism/fls_voxels.py
   DESTINATION lib/${PROJECT_NAME})
 
 ament_package()

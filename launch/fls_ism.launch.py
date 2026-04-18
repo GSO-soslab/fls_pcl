@@ -13,13 +13,13 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     param_config = os.path.join(
-        get_package_share_directory('fls_pcl'),
+        get_package_share_directory('fls_ism'),
         'config',
         'fls_params.yaml'
     )
 
     fls_pcl_node = Node(
-        package='fls_pcl',
+        package='fls_ism',
         executable='fls_pcl.py',
         name='fls_pcl_node',
         namespace="alpha_rise",
@@ -28,7 +28,7 @@ def generate_launch_description():
     )
 
     fls_voxel_node = Node(
-        package='fls_pcl',
+        package='fls_ism',
         executable='fls_voxels.py',
         name='fls_voxel_node',
         namespace="alpha_rise",

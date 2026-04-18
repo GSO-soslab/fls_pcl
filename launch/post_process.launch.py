@@ -25,7 +25,7 @@ def generate_launch_description():
     voxel_log_odds = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                get_package_share_directory('fls_pcl'),
+                get_package_share_directory('fls_ism'),
                 'launch',
                 'voxel_log_odds.launch.py'
             )
@@ -38,9 +38,9 @@ def generate_launch_description():
     fls_voxel_prob = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                get_package_share_directory('fls_pcl'),
+                get_package_share_directory('fls_ism'),
                 'launch',
-                'fls_pcl.launch.py'
+                'fls_ism.launch.py'
             )
         ),
         launch_arguments={
@@ -73,7 +73,7 @@ def generate_launch_description():
     octomap = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(
-                get_package_share_directory('fls_pcl'),
+                get_package_share_directory('fls_ism'),
                 'launch',
                 'octomap_mapping.launch.py'
             )
