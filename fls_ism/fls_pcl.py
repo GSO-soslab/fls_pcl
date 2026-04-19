@@ -36,9 +36,6 @@ class FLS_PCL(Node):
         self.declare_parameter('max_depth',Parameter.Type.DOUBLE)
         self.max_depth = self.get_parameter('max_depth').value
 
-        self.declare_parameter('min_depth',Parameter.Type.DOUBLE)
-        self.min_depth = self.get_parameter('min_depth').value
-
         self.declare_parameter('threshold_intensity',Parameter.Type.INTEGER)
         self.intensity_threshold = self.get_parameter('threshold_intensity').value
 
@@ -334,7 +331,7 @@ class FLS_PCL(Node):
             )).astype(np.float32)
 
             z = points[:, 2]
-            points = points[(z >= self.min_depth) & (z <= self.max_depth)]
+            points = points[z <= self.max_depth]
 
             pcl_msg.data = points.tobytes()
             pcl_msg.width = len(points)
