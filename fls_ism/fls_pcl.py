@@ -348,38 +348,6 @@ class FLS_PCL(Node):
         )
         publisher.publish(pcl_msg)
     
-    def anisotropic_diffusion(self, image, niter=10, kappa=30, gamma=0.1):
-        """
-        Perona-Malik anisotropic diffusion.
-
-        Smooths homogeneous regions while preserving edges.
-
-        :param image: uint8 or float input image
-        :param niter:  number of diffusion iterations
-        :param kappa:  edge-sensitivity threshold — lower = more edge preservation
-        :param gamma:  diffusion rate per iteration (≤ 0.25 for stability)
-        :return: diffused image, same dtype as input
-        """
-        src_dtype = image.dtype
-        img = image.astype(np.float32)
-
-        for _ in range(niter):
-            # Gradients in 4 directions
-            dN = np.roll(img,  1, axis=0) - img
-            dS = np.roll(img, -1, axis=0) - img
-            dE = np.roll(img, -1, axis=1) - img
-            dW = np.roll(img,  1, axis=1) - img
-
-            # Perona-Malik conductance (exponential)
-            cN = np.exp(-(dN / kappa) ** 2)
-            cS = np.exp(-(dS / kappa) ** 2)
-            cE = np.exp(-(dE / kappa) ** 2)
-            cW = np.exp(-(dW / kappa) ** 2)
-
-            img += gamma * (cN * dN + cS * dS + cE * dE + cW * dW)
-
-        return np.clip(img, 0, 255).astype(src_dtype)
-
     def image_preprocess(self, K):    
         rows, columns = K.shape
         self.n_bins, self.n_beams = rows, columns
@@ -419,8 +387,7 @@ class FLS_PCL(Node):
             # Apply mask
             K[mask] = 0
 
-            # Anisotropic diffusion — smooths homogeneous regions, preserves edges
-            K = self.anisotropic_diffusion(K, niter=3, kappa=30, gamma=0.1)
+            K = cv2.bilateralFilter(K, d=5, sigmaColor=30, sigmaSpace=5)
             return K
         
     def closest_to_centroid(self, voxel_points: np.ndarray, geometry_points: np.ndarray):
