@@ -9,7 +9,6 @@ import numpy as np
 from cv_bridge import CvBridge
 from tf2_ros import Buffer, TransformListener
 import tf2_sensor_msgs.tf2_sensor_msgs
-import sensor_msgs_py.point_cloud2 as pc2
 from tf2_ros import TransformException
 from oculus_interfaces.msg import Ping
 from visualization_msgs.msg import Marker
@@ -129,9 +128,8 @@ class FLS_PCL(Node):
         self.bool_create_sonar_geometry = False
 
         # === Publishers ===
-        self.pub_pcl_max      = self.create_publisher(PointCloud2, pub_topic + '/max_intensity', 10)
+        self.pub_pcl_max  = self.create_publisher(PointCloud2, pub_topic + '/max_intensity', 10)
         self.pub_pcl_prob = self.create_publisher(PointCloud2, pub_topic + '/probability', 10)
-        self.pub_pcl_raw  = self.create_publisher(PointCloud2, pub_topic + '/raw', 10)
         self.pub_fls_median_image = self.create_publisher(Image, pub_topic+'/image/filtered', 10)
 
         # === Subscribers === 
@@ -223,18 +221,6 @@ class FLS_PCL(Node):
             mx_frame = self.extract_max_intensity(K)
             pr_frame = self.extract_probabilistic(K)
 
-            # --- Build raw intensity cloud (unfiltered image, no range/depth filter) ---
-            raw_intensities = raw_image.flatten().astype(np.float32)
-            raw_sx, raw_sy = self._cached_sensor_xy
-            raw_num = raw_sx.shape[0]
-            raw_points = np.zeros((raw_num, 4), dtype=np.float32)
-            raw_points[:, 0] = raw_sx
-            raw_points[:, 1] = raw_sy
-            raw_points[:, 3] = raw_intensities
-            raw_pcl_msg = self.build_pcl_msg(raw_num, raw_points.tobytes())
-            raw_pcl_msg.header.stamp = self.get_clock().now().to_msg()
-            self.pub_pcl_raw.publish(raw_pcl_msg)
-
             # --- Build max_intensity (fan) cloud ---
             mx_sensor_x = mx_frame[:, 0].astype(np.float32)
             mx_sensor_y = mx_frame[:, 1].astype(np.float32)
@@ -247,7 +233,6 @@ class FLS_PCL(Node):
             mx_points[:, 3] = mx_intensity
 
             mx_pcl_msg = self.build_pcl_msg(mx_num, mx_points.tobytes())
-            self.depth_filter_and_publish(mx_pcl_msg, self.pub_pcl_max)
 
             # --- Build probabilistic_intensity cloud ---
             pr_sensor_x = pr_frame[:, 0].astype(np.float32)
@@ -288,7 +273,18 @@ class FLS_PCL(Node):
             pr_points[:, 3] = all_probs[self.indices]
 
             pr_pcl_msg = self.build_pcl_msg(pr_num, pr_points.tobytes())
-            self.depth_filter_and_publish(pr_pcl_msg, self.pub_pcl_prob)
+
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    self.world_frame_id,
+                    self.frame_id,
+                    rclpy.time.Time()
+                )
+            except TransformException as e:
+                self.get_logger().warn(f'Transform not available: {e}')
+                return
+            self.depth_filter_and_publish(mx_pcl_msg, self.pub_pcl_max, transform)
+            self.depth_filter_and_publish(pr_pcl_msg, self.pub_pcl_prob, transform)
 
     def build_pcl_msg(self, num_points: int, data: bytes) -> PointCloud2:
         '''Create a PointCloud2 from the fixed template, with the given width and data.'''
@@ -303,49 +299,54 @@ class FLS_PCL(Node):
         pcl_msg.data = data
         return pcl_msg
 
-    def depth_filter_and_publish(self, pcl_msg: PointCloud2, publisher):
+    def invert_transform(self, t):
+        """Invert a TransformStamped geometrically (no second TF lookup)."""
+        from geometry_msgs.msg import TransformStamped
+        inv = TransformStamped()
+        inv.header.stamp = t.header.stamp
+        inv.header.frame_id = t.child_frame_id
+        inv.child_frame_id = t.header.frame_id
+
+        # Conjugate quaternion = unit-quaternion inverse
+        qx, qy, qz, qw = -t.transform.rotation.x, -t.transform.rotation.y, \
+                          -t.transform.rotation.z,  t.transform.rotation.w
+        # Rotate (-translation) by conjugate quaternion via Rodrigues formula
+        vx = -t.transform.translation.x
+        vy = -t.transform.translation.y
+        vz = -t.transform.translation.z
+        cx  = qy * vz - qz * vy
+        cy  = qz * vx - qx * vz
+        cz  = qx * vy - qy * vx
+        c2x = qy * cz - qz * cy
+        c2y = qz * cx - qx * cz
+        c2z = qx * cy - qy * cx
+        inv.transform.translation.x = vx + 2 * qw * cx + 2 * c2x
+        inv.transform.translation.y = vy + 2 * qw * cy + 2 * c2y
+        inv.transform.translation.z = vz + 2 * qw * cz + 2 * c2z
+        inv.transform.rotation.x = qx
+        inv.transform.rotation.y = qy
+        inv.transform.rotation.z = qz
+        inv.transform.rotation.w = qw
+        return inv
+
+    def depth_filter_and_publish(self, pcl_msg: PointCloud2, publisher, transform):
         '''
         Apply world-frame depth filter to a PointCloud2 message then publish it.
         Transforms to world frame, filters by max_depth, transforms back, publishes.
         '''
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                self.world_frame_id,
-                self.frame_id,
-                rclpy.time.Time()
-            )
+        pcl_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(pcl_msg, transform)
 
-            pcl_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(pcl_msg, transform)
+        points = np.frombuffer(bytes(pcl_msg.data), dtype=np.float32).reshape(-1, 4)
+        points = points[points[:, 2] <= self.max_depth]
 
-            points_struct = pc2.read_points(
-                pcl_msg,
-                field_names=('x', 'y', 'z', 'intensity'),
-                skip_nans=False
-            )
+        pcl_msg.data = points.tobytes()
+        pcl_msg.width = len(points)
+        pcl_msg.row_step = pcl_msg.point_step * len(points)
 
-            points = np.column_stack((
-                points_struct['x'],
-                points_struct['y'],
-                points_struct['z'],
-                points_struct['intensity']
-            )).astype(np.float32)
-
-            z = points[:, 2]
-            points = points[z <= self.max_depth]
-
-            pcl_msg.data = points.tobytes()
-            pcl_msg.width = len(points)
-            pcl_msg.row_step = pcl_msg.point_step * len(points)
-
-            inv_transform = self.tf_buffer.lookup_transform(
-                self.frame_id,
-                self.world_frame_id,
-                rclpy.time.Time()
-            )
-            pcl_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(pcl_msg, inv_transform)
-            publisher.publish(pcl_msg)
-        except TransformException as e:
-            self.get_logger().warn(f'Transform not available: {e}')
+        pcl_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(
+            pcl_msg, self.invert_transform(transform)
+        )
+        publisher.publish(pcl_msg)
     
     def anisotropic_diffusion(self, image, niter=10, kappa=30, gamma=0.1):
         """
@@ -419,7 +420,7 @@ class FLS_PCL(Node):
             K[mask] = 0
 
             # Anisotropic diffusion — smooths homogeneous regions, preserves edges
-            K = self.anisotropic_diffusion(K, niter=5, kappa=30, gamma=0.1)
+            K = self.anisotropic_diffusion(K, niter=3, kappa=30, gamma=0.1)
             return K
         
     def closest_to_centroid(self, voxel_points: np.ndarray, geometry_points: np.ndarray):
