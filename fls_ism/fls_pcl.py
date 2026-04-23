@@ -4,7 +4,7 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from rclpy.qos import QoSProfile, DurabilityPolicy
 from sensor_msgs.msg import PointCloud2, PointField, Image
-from std_msgs.msg import Header
+
 import numpy as np
 from cv_bridge import CvBridge
 from tf2_ros import Buffer, TransformListener
@@ -13,6 +13,7 @@ from tf2_ros import TransformException
 from oculus_interfaces.msg import Ping
 from visualization_msgs.msg import Marker
 from scipy.spatial import cKDTree
+import cv2
 
 class FLS_PCL(Node):
     """
@@ -29,8 +30,8 @@ class FLS_PCL(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
         # === Declare and read parameters ===
-        self.declare_parameter('sim',Parameter.Type.BOOL)
-        self.sim = self.get_parameter('sim').value
+        self.declare_parameter('stonefish',Parameter.Type.BOOL)
+        self.stonefish = self.get_parameter('stonefish').value
 
         self.declare_parameter('max_depth',Parameter.Type.DOUBLE)
         self.max_depth = self.get_parameter('max_depth').value
@@ -44,8 +45,7 @@ class FLS_PCL(Node):
         self.declare_parameter('vertical_fov_deg', Parameter.Type.DOUBLE)
         self.vertical_beamwidth = self.get_parameter('vertical_fov_deg').value
 
-        self.declare_parameter('sensor_frame_id', Parameter.Type.STRING)
-        self.frame_id = self.get_parameter('sensor_frame_id').value
+        self.frame_id = ''
 
         self.declare_parameter('world_frame_id', Parameter.Type.STRING)
         self.world_frame_id = self.get_parameter('world_frame_id').value
@@ -53,7 +53,7 @@ class FLS_PCL(Node):
         self.declare_parameter('marker_topic',Parameter.Type.STRING)
         self.declare_parameter('image_sub_topic',Parameter.Type.STRING)
 
-        if not self.sim:
+        if not self.stonefish:
             self.declare_parameter('ping_sub_topic',Parameter.Type.STRING)
         
         self.declare_parameter('pointcloud_pub_topic', Parameter.Type.STRING)
@@ -134,10 +134,10 @@ class FLS_PCL(Node):
 
         # === Subscribers === 
         self.sub_image = self.create_subscription(Image, self.get_parameter('image_sub_topic').value, self.image_cb, 10)
-        self.sub_pcl = self.create_subscription(PointCloud2, pub_topic, self.pointcloud_cb, 10)
+        self.sub_pcl = self.create_subscription(PointCloud2, pub_topic + '/max_intensity', self.pointcloud_cb, 10)
         
         # === Sub to Ping topic else, get sim parameters ===
-        if not self.sim:
+        if not self.stonefish:
             self.sub_ping = self.create_subscription(Ping, self.get_parameter('ping_sub_topic').value, self.ping_cb, 10)
         else:
             self.max_range = 40.0
@@ -151,9 +151,6 @@ class FLS_PCL(Node):
 
         # === Initialize PointCloud2 message ===
         self.pointcloud_msg = PointCloud2()
-        h = Header()
-        h.frame_id = self.frame_id
-        self.pointcloud_msg.header = h
         self.pointcloud_msg.height = 1  # unorganized cloud
         self.fields = [
             PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
@@ -174,6 +171,7 @@ class FLS_PCL(Node):
             self.voxel_centroids as numpy array
         '''
         if not self.receive_marker:
+            self.frame_id = msg.header.frame_id
             self.voxel_centroids = np.array([(p.x, p.y, p.z) for p in msg.points],dtype=np.float64)
             self.marker_resolution = msg.scale.x
             self.receive_marker = True
@@ -351,7 +349,7 @@ class FLS_PCL(Node):
     def image_preprocess(self, K):    
         rows, columns = K.shape
         self.n_bins, self.n_beams = rows, columns
-        if self.sim:
+        if self.stonefish:
             return K
         else:
             h, w = K.shape
