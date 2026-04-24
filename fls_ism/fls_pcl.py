@@ -297,53 +297,37 @@ class FLS_PCL(Node):
         pcl_msg.data = data
         return pcl_msg
 
-    def invert_transform(self, t):
-        """Invert a TransformStamped geometrically (no second TF lookup)."""
-        from geometry_msgs.msg import TransformStamped
-        inv = TransformStamped()
-        inv.header.stamp = t.header.stamp
-        inv.header.frame_id = t.child_frame_id
-        inv.child_frame_id = t.header.frame_id
-
-        # Conjugate quaternion = unit-quaternion inverse
-        qx, qy, qz, qw = -t.transform.rotation.x, -t.transform.rotation.y, \
-                          -t.transform.rotation.z,  t.transform.rotation.w
-        # Rotate (-translation) by conjugate quaternion via Rodrigues formula
-        vx = -t.transform.translation.x
-        vy = -t.transform.translation.y
-        vz = -t.transform.translation.z
-        cx  = qy * vz - qz * vy
-        cy  = qz * vx - qx * vz
-        cz  = qx * vy - qy * vx
-        c2x = qy * cz - qz * cy
-        c2y = qz * cx - qx * cz
-        c2z = qx * cy - qy * cx
-        inv.transform.translation.x = vx + 2 * qw * cx + 2 * c2x
-        inv.transform.translation.y = vy + 2 * qw * cy + 2 * c2y
-        inv.transform.translation.z = vz + 2 * qw * cz + 2 * c2z
-        inv.transform.rotation.x = qx
-        inv.transform.rotation.y = qy
-        inv.transform.rotation.z = qz
-        inv.transform.rotation.w = qw
-        return inv
+    def transform_to_matrix(self, transform):
+        t = transform.transform
+        x, y, z, w = t.rotation.x, t.rotation.y, t.rotation.z, t.rotation.w
+        R = np.array([
+            [1-2*(y*y+z*z),   2*(x*y-w*z),   2*(x*z+w*y)],
+            [  2*(x*y+w*z), 1-2*(x*x+z*z),   2*(y*z-w*x)],
+            [  2*(x*z-w*y),   2*(y*z+w*x), 1-2*(x*x+y*y)],
+        ], dtype=np.float32)
+        T = np.array([t.translation.x, t.translation.y, t.translation.z], dtype=np.float32)
+        return R, T
 
     def depth_filter_and_publish(self, pcl_msg: PointCloud2, publisher, transform):
         '''
         Apply world-frame depth filter to a PointCloud2 message then publish it.
         Transforms to world frame, filters by max_depth, transforms back, publishes.
+        do_transform_cloud is O(n) as it does point-by-point.
+        https://docs.ros.org/en/jade/api/tf2_sensor_msgs/html/tf2__sensor__msgs_8py_source.html
+        Manually treating it as a matrix gets you O(1).
         '''
-        pcl_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(pcl_msg, transform)
-
         points = np.frombuffer(bytes(pcl_msg.data), dtype=np.float32).reshape(-1, 4)
-        points = points[points[:, 2] <= self.max_depth]
-
+        R, T = self.transform_to_matrix(transform)
+        # X'  = R_{SENSOR}^{WORLD}*X + T_{SENSOR}^{WORLD}
+        xyz_world = (R @ points[:, :3].T + T[:, None]).T
+        mask = xyz_world[:, 2] <= self.max_depth
+        points = points[mask]
+        # X = R_{WORLD}^{SENSOR}*(X' - T_{SENSOR}^{WORLD})
+        # X = (R_{SENSOR}^{WORLD})^T*(X' - T_{SENSOR}^{WORLD})
+        points[:, :3] = (R.T @ (xyz_world[mask].T - T[:, None])).T
         pcl_msg.data = points.tobytes()
         pcl_msg.width = len(points)
         pcl_msg.row_step = pcl_msg.point_step * len(points)
-
-        pcl_msg = tf2_sensor_msgs.tf2_sensor_msgs.do_transform_cloud(
-            pcl_msg, self.invert_transform(transform)
-        )
         publisher.publish(pcl_msg)
     
     def image_preprocess(self, K):    
