@@ -314,7 +314,7 @@ class FLS_PCL(Node):
         Transforms to world frame, filters by max_depth, transforms back, publishes.
         do_transform_cloud is O(n) as it does point-by-point.
         https://docs.ros.org/en/jade/api/tf2_sensor_msgs/html/tf2__sensor__msgs_8py_source.html
-        Manually treating it as a matrix gets you O(1).
+        Manually treating it as a matrix gets you O(n) but with very Batched BLAS optimization.
         '''
         points = np.frombuffer(bytes(pcl_msg.data), dtype=np.float32).reshape(-1, 4)
         R, T = self.transform_to_matrix(transform)
@@ -404,20 +404,13 @@ class FLS_PCL(Node):
         in_cell          = self._max_pool_cache['in_cell']
         n_voxels         = self._max_pool_cache['n_voxels']
 
-        valid_intensities = intensities[in_cell]
-        peak_indices      = np.full(n_voxels, -1, dtype=np.int64)
+        valid_intensities = intensities[valid_sensor_idx]
         peak_intensities  = np.zeros(n_voxels, dtype=np.float32)
 
         if valid_sensor_idx.size > 0:
-            order = np.lexsort((-valid_intensities, valid_voxel_idx))
-            sv = valid_voxel_idx[order]
-            ss = valid_sensor_idx[order]
-            si = valid_intensities[order]
-            _, first = np.unique(sv, return_index=True)
-            peak_indices[sv[first]]     = ss[first]
-            peak_intensities[sv[first]] = si[first]
+            np.maximum.at(peak_intensities, valid_voxel_idx, valid_intensities)
 
-        return peak_indices, peak_intensities
+        return None, peak_intensities
 
     def ensure_sensor_xy_cache(self, image: np.ndarray):
         '''Build and cache sensor-frame XY coordinates for all pixels (fixed geometry).'''
@@ -429,25 +422,28 @@ class FLS_PCL(Node):
             theta = self.bearings[cols_flat]
             meters_per_beam = self.max_range / self.n_bins
             r = meters_per_beam * (self.n_bins - rows_flat)
-            self._cached_sensor_xy = (r * np.cos(theta), r * np.sin(theta))
+            sensor_x = r * np.cos(theta)
+            sensor_y = r * np.sin(theta)
+            self._cached_sensor_xy = (sensor_x, sensor_y)
+            self._cached_cols_flat = cols_flat
+            self._cached_valid = np.hypot(sensor_x, sensor_y) > self.threshold_min_range
+            self._cached_valid_2d = self._cached_valid.reshape(image.shape)
 
     def extract_max_intensity(self, image: np.ndarray) -> np.ndarray:
         '''Peak-intensity pixel per sonar beam column. Returns (N, 3): sensor_x, sensor_y, intensity.'''
         sensor_x, sensor_y = self._cached_sensor_xy
-        cols_flat = np.indices(image.shape)[1].flatten()
-        ins = image.flatten().astype(np.float32)
 
-        valid = np.hypot(sensor_x, sensor_y) > self.threshold_min_range
-        sx, sy, col, ins = sensor_x[valid], sensor_y[valid], cols_flat[valid], ins[valid]
+        # Zero near-range pixels, then argmax per beam column — O(n_bins*n_beams), no sort
+        ins_2d = image.astype(np.float32) * self._cached_valid_2d
+        best_row = np.argmax(ins_2d, axis=0)          # (n_beams,)
+        col_idx = np.arange(ins_2d.shape[1])
+        best_intensity = ins_2d[best_row, col_idx]
 
-        if len(ins) == 0:
-            return np.empty((0, 3), dtype=np.float32)
+        mask = best_intensity >= self.intensity_threshold
+        beams = col_idx[mask]
+        flat_idx = best_row[beams] * ins_2d.shape[1] + beams
 
-        order = np.lexsort((-ins, col))
-        _, first_occ = np.unique(col[order], return_index=True)
-        keep = order[first_occ]
-        mask = ins[keep] >= self.intensity_threshold
-        return np.column_stack((sx[keep][mask], sy[keep][mask], ins[keep][mask]))
+        return np.column_stack((sensor_x[flat_idx], sensor_y[flat_idx], best_intensity[beams]))
 
     def extract_probabilistic(self, image: np.ndarray) -> np.ndarray:
         '''Max-pool intensities onto voxel centroids, map to probabilities. Returns (N, 3): voxel_x, voxel_y, probability.'''
